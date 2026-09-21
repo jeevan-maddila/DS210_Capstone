@@ -1,0 +1,7 @@
+# Datasets are downloaded and stored locally by each contributor.
+/data/
+
+# Generated Python bytecode.
+__pycache__/
+*.pyc
+*.pyo
