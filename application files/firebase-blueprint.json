@@ -1,0 +1,329 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "Super admin credential and authorization entry",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Admin email address"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["super_admin"],
+          "description": "System role"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["email", "role"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile with role, event assignments, and company credentials",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "The user's unique Firebase Auth ID"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The user's email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["super_admin", "event_manager", "photographer"],
+          "description": "System role determining permissions"
+        },
+        "assignedEvents": {
+          "type": "array",
+          "description": "List of event IDs assigned to this user"
+        },
+        "inviteStatus": {
+          "type": "string",
+          "enum": ["active", "pending"],
+          "description": "Account status"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "Event definition created and managed by an Event Manager or Company Owner",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique event identifier"
+        },
+        "ownerUid": {
+          "type": "string",
+          "description": "UID of the Event Manager or Owner who created the event"
+        },
+        "ownerEmail": {
+          "type": "string",
+          "description": "Email address of the event manager or creator"
+        },
+        "name": {
+          "type": "string",
+          "description": "Event title or name"
+        },
+        "date": {
+          "type": "string",
+          "description": "Scheduled date of the event"
+        },
+        "location": {
+          "type": "string",
+          "description": "Physical or virtual venue location"
+        },
+        "ticketTypes": {
+          "type": "array",
+          "description": "Available ticket tiers/types configured by manager"
+        },
+        "sessions": {
+          "type": "array",
+          "description": "Available breakout sessions or tracks"
+        },
+        "customFields": {
+          "type": "array",
+          "description": "Up to 5 custom check-in fields (id, label, type: text|boolean)"
+        },
+        "marketingChannels": {
+          "type": "array",
+          "description": "Configured marketing and publication channels (e.g. Facebook, Instagram, LinkedIn)"
+        },
+        "assignedPhotographers": {
+          "type": "array",
+          "description": "List of photographer objects with email, status, and optional uid"
+        },
+        "photographerEmails": {
+          "type": "array",
+          "description": "Indexed list of assigned photographer email addresses"
+        },
+        "photographerUids": {
+          "type": "array",
+          "description": "Indexed list of assigned photographer UIDs"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Event creation timestamp"
+        }
+      },
+      "required": ["id", "ownerUid", "name", "date"]
+    },
+    "Photo": {
+      "title": "Photo",
+      "description": "Master photograph metadata stored in top-level photos table with event_id reference",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique photo identifier"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "Associated event ID (foreign key reference to Event)"
+        },
+        "event_id": {
+          "type": "string",
+          "description": "Relational column alias for associated event ID"
+        },
+        "uploadedBy": {
+          "type": "string",
+          "description": "UID of the photographer or manager who uploaded"
+        },
+        "uploadedByEmail": {
+          "type": "string",
+          "description": "Email address of uploader"
+        },
+        "uploadedAt": {
+          "type": "string",
+          "description": "Upload timestamp"
+        },
+        "storagePath": {
+          "type": "string",
+          "description": "Firebase / Google Cloud Storage location path"
+        },
+        "downloadUrl": {
+          "type": "string",
+          "description": "Download or preview URL"
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Original file name"
+        },
+        "fileSize": {
+          "type": "number",
+          "description": "File size in bytes"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "processed", "flagged"],
+          "description": "Processing status"
+        },
+        "matchedAttendees": {
+          "type": "array",
+          "description": "Array of matched attendee IDs from CV face matching pipeline"
+        },
+        "detectedFaceEmbeddings": {
+          "type": "array",
+          "description": "Array of 512-dimensional feature vectors extracted from detected faces for KNN matching"
+        },
+        "clearedStoragePath": {
+          "type": "string",
+          "description": "Storage location of privacy-cleared marketing image with non-consenting faces blurred"
+        },
+        "clearedDownloadUrl": {
+          "type": "string",
+          "description": "Public URL of privacy-cleared marketing image"
+        },
+        "rawStoragePath": {
+          "type": "string",
+          "description": "Restricted original high-res storage path preserved for future AI-face regeneration"
+        },
+        "hasBlurredFaces": {
+          "type": "boolean",
+          "description": "Flag indicating if one or more non-consenting or unconfirmed faces were redacted"
+        },
+        "blurredFaceCount": {
+          "type": "number",
+          "description": "Count of non-consenting faces blurred"
+        },
+        "deleteOn": {
+          "type": "string",
+          "description": "Optional scheduled deletion date timestamp for event media cleanup"
+        },
+        "processedAt": {
+          "type": "string",
+          "description": "Timestamp when pipeline processing completed"
+        }
+      },
+      "required": ["id", "eventId", "uploadedBy", "storagePath", "fileName", "status", "matchedAttendees"]
+    },
+    "Attendee": {
+      "title": "Attendee",
+      "description": "Attendee check-in submission record with event_id reference and facial embedding",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique attendee check-in identifier"
+        },
+        "eventId": {
+          "type": "string",
+          "description": "Identifier of the event checked into (foreign key reference to Event)"
+        },
+        "event_id": {
+          "type": "string",
+          "description": "Relational column alias for associated event ID"
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Attendee full legal or badge name"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Attendee contact email"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Optional contact phone number"
+        },
+        "ticketType": {
+          "type": "string",
+          "description": "Selected ticket tier"
+        },
+        "sessionPreferences": {
+          "type": "array",
+          "description": "Selected session choices"
+        },
+        "dietaryAccessibility": {
+          "type": "string",
+          "description": "Dietary or accessibility requirements"
+        },
+        "customResponses": {
+          "type": "object",
+          "description": "Key-value responses corresponding to event custom fields"
+        },
+        "consentGiven": {
+          "type": "boolean",
+          "description": "Explicit required agreement to data processing and retention"
+        },
+        "photoConsentGiven": {
+          "type": "boolean",
+          "description": "Unified consent to photo identification and tagging"
+        },
+        "allowedMarketingChannels": {
+          "type": "array",
+          "description": "Granular list of channels attendee explicitly allowed their photos to appear in"
+        },
+        "checkedInAt": {
+          "type": "string",
+          "description": "Timestamp of check-in"
+        },
+        "checkInPhotoPath": {
+          "type": "string",
+          "description": "Firebase Storage path of optional check-in selfie, or null"
+        },
+        "checkInPhotoUrl": {
+          "type": "string",
+          "description": "Download or preview URL of check-in selfie"
+        },
+        "photoEmbedding": {
+          "type": "array",
+          "description": "512-dimensional numerical facial feature embedding vector used for KNN nearest-neighbor similarity search"
+        },
+        "deleteOn": {
+          "type": "string",
+          "description": "Scheduled deletion date timestamp for automated database cleanup and vector purge (enforces 30-day retention window)"
+        }
+      },
+      "required": ["id", "eventId", "fullName", "email", "consentGiven", "checkedInAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Super admin credential collection"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Master Users table: profiles, roles, and event assignments independent of single events"
+    },
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Master Events table: event configuration, schedule, ticket tiers, and assigned personnel"
+    },
+    "/photos/{photoId}": {
+      "schema": "Photo",
+      "description": "Master Photos table: all company event photos with eventId/event_id column for global search and filtering"
+    },
+    "/attendees/{attendeeId}": {
+      "schema": "Attendee",
+      "description": "Master Attendees table: all attendee check-in records with eventId/event_id column"
+    },
+    "/events/{eventId}/attendees/{attendeeId}": {
+      "schema": "Attendee",
+      "description": "Scoped attendee check-in subcollection (maintained for backward compatibility)"
+    },
+    "/events/{eventId}/photos/{photoId}": {
+      "schema": "Photo",
+      "description": "Scoped event photo subcollection (maintained for backward compatibility)"
+    }
+  }
+}

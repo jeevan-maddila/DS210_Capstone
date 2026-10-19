@@ -1,0 +1,7 @@
+opencv-python-headless
+numpy
+insightface
+onnxruntime
+huggingface_hub
+google-cloud-firestore
+google-cloud-storage
