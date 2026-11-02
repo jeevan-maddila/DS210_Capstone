@@ -235,7 +235,7 @@ def plots(output,grid,comparison,ap_rows,curves,groups):
             ax.scatter(r["median_ms"],100*r["recall"],color=color,label=str(size) if j==0 else None,
                        marker="o" if r["precision"]>=.95 else "x",s=65)
             ax.annotate(f"{r['threshold']:.2f}",(r["median_ms"],100*r["recall"]),xytext=(5,2),textcoords="offset points",fontsize=8)
-    ax.set(xlabel="Median cached detector latency (ms; score floor 0.02)",ylabel="Development recall (%)",title="Circles meet 95% precision; crosses do not\nLabels are confidence cutoffs");ax.legend(title="Input size");ax.grid(alpha=.2)
+    ax.set(xlabel="Median cached detector latency (ms; score floor 0.02)",ylabel="Development recall (%)",title="Circles meet 95% precision; crosses do not\nLabels are face-detection confidence cutoffs");ax.legend(title="Detector input size");ax.grid(alpha=.2)
     fig.tight_layout();fig.savefig(output/"recall_vs_latency.png",dpi=170);plt.close(fig)
     for attribute,filename,title in [("size","missed_faces_by_size.png","Holdout misses by original face height"),("occlusion","occlusion_recall.png","Holdout recall by occlusion (0 none, 1 partial, 2 heavy)")]:
         import csv
@@ -299,7 +299,7 @@ def report(output,selection,comparison,ap_rows,manifest):
            "This evaluates face detection, not identity recognition. The app's configuration is unchanged.","",
            f"Development selection: maximize recall with precision >= {selection['precision_target']:.0%}. Target met: **{selection['target_met']}**."]
     if not selection["target_met"]:lines += ["",selection["fallback_reason"],"The exploratory comparison below is not a passing recommendation."]
-    lines += ["","## Frozen holdout comparison","","| Configuration | Input / cutoff | Recall | Precision | Missed faces | Unmatched detections | Complete photos | Median / p95 ms* |",
+    lines += ["","## Frozen holdout comparison","","| Configuration | Detector input / confidence cutoff | Recall | Precision | Missed faces | Unmatched detections | Complete photos | Median / p95 ms* |",
               "|---|---|---:|---:|---:|---:|---:|---:|"]
     for r in comparison:lines.append(f"| {r['policy']} | {r['size']} / {r['threshold']:.2f} | {r['recall']:.2%} | {r['precision']:.2%} | {r['false_negatives']} | {r['false_positives']} | {r['complete_photo_rate']:.2%} | {r['median_ms']:.1f} / {r['p95_ms']:.1f} |")
     before,after=comparison

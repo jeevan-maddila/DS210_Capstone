@@ -122,13 +122,13 @@ def main():
         ax.plot([r["threshold"] for r in sweep], [100*r[key] for r in sweep], label=label)
     ax.axvline(args.baseline_threshold, color="gray", linestyle="--", label="Current 0.55" if args.baseline_threshold == .55 else "Baseline")
     ax.axvline(candidate, color="black", linestyle=":", label=f"Development candidate {candidate:.3f}")
-    ax.set(xlabel="Cosine threshold (accept if score >= threshold)", ylabel="Percent",
+    ax.set(xlabel="Recognition similarity threshold (cosine)", ylabel="Percent",
            title="LFW threshold sweep — descriptive on all pairs", ylim=(-2, 102))
     ax.legend()
     fig.tight_layout()
     fig.savefig(args.output / "threshold_tradeoff.png", dpi=160)
     plt.close(fig)
-    lines = ["# LFW threshold tuning", "", f"Selected objective: `{args.objective}`; development FAR budget: {args.target_far:.2%}.", "",
+    lines = ["# LFW recognition similarity threshold tuning", "", f"Selected objective: `{args.objective}`; development FAR budget: {args.target_far:.2%}.", "",
              "| Policy | Accuracy | Genuine acceptance | False acceptance | False rejects | False accepts |",
              "|---|---:|---:|---:|---:|---:|"]
     for row in comparisons:

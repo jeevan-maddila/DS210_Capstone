@@ -87,7 +87,7 @@ def main():
            title="D  Overall verification accuracy", xlim=(80, 102))
     ax.invert_yaxis()
     ax.grid(axis="x", alpha=.18)
-    fig.suptitle("LFW: what changes when we tune the decision threshold?", fontsize=19, weight="bold", y=.985)
+    fig.suptitle("LFW: tuning the recognition similarity threshold", fontsize=19, weight="bold", y=.985)
     fig.text(.5, .012, "6,000 pairs · same AuraFace weights · tuned policies use 10-fold CV · original is fixed\n"
              "Retrospective local LFW analysis; prepared crops, not event-gallery performance. Zero observed errors does not imply zero risk.",
              ha="center", fontsize=10, color="#475569")
@@ -133,12 +133,12 @@ def main():
                                  (candidates[1], COLORS[2], f"0.5% budget candidate {candidates[1]:.3f}"),
                                  (candidates[2], COLORS[3], f"1% budget candidate {candidates[2]:.3f}")]:
             ax.axvline(t, color=color, linestyle="--", alpha=.7, label=label)
-        ax.set(xlabel="Cosine threshold", ylabel="Percent", xlim=(.1, .65))
+        ax.set(xlabel="Recognition similarity threshold (cosine)", ylabel="Percent", xlim=(.1, .65))
         ax.legend(fontsize=8, loc="lower left" if ax is axes[0] else "upper right")
         ax.grid(alpha=.2)
     axes[0].set(title="Genuine acceptance and accuracy", ylim=(40, 102))
     axes[1].set(title="False accepts (zoomed to 0–3%)", ylim=(0, 3))
-    fig.suptitle("Threshold sweep: descriptive results on all pairs", fontsize=16, weight="bold")
+    fig.suptitle("Recognition similarity sweep: descriptive results on all pairs", fontsize=16, weight="bold")
     fig.text(.5, .015, "Candidate thresholds are fit on all 6,000 pairs. Curves are in-sample descriptions, not held-out candidate scores.", ha="center", fontsize=9)
     fig.tight_layout(rect=(0, .05, 1, .92))
     save(fig, args.output, "03_threshold_sweep")
@@ -149,7 +149,7 @@ def main():
         ax.plot(range(1, 11), [f["threshold"] for f in folds], "o-", color=color, label=title)
         fold_rows.extend(dict(policy=title, **f) for f in folds)
     ax.axhline(.55, linestyle="--", color=COLORS[0], label="Original 0.55")
-    ax.set(xlabel="Held-out fold", ylabel="Threshold fitted on the other nine folds",
+    ax.set(xlabel="Held-out fold", ylabel="Recognition similarity threshold fitted on nine folds",
            title="Thresholds vary with the objective and development pairs", xticks=range(1, 11), ylim=(.17, .59))
     ax.legend(loc="center right")
     ax.grid(alpha=.2)

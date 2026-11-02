@@ -134,6 +134,26 @@ For independent verification, point `pred_dir` in the supplied `wider_eval.m` at
 that folder, keep `gt_dir` pointing at the supplied ground truth, and run the
 official MATLAB evaluation environment separately.
 
+## Browse full photos with uv
+
+```powershell
+uv run src/scripts/view_widerface.py
+uv run src/scripts/view_widerface.py --examples
+uv run src/scripts/view_widerface.py --event 12 --count 50
+```
+
+The first command browses a seeded sample of 100 original photos. `--examples`
+opens the four full images from the error report, not the zoomed crops. Arrow
+keys browse; F fits the whole photo; 1 shows actual pixels; mouse wheel or +/-
+zooms; dragging pans. The optional “Mark example face” checkbox highlights the
+annotation discussed in the error analysis. The original files are unchanged.
+Use `--count 0` for all photos, `--image event/filename.jpg` to start at a specific
+photo, and `--list` to print paths without opening a window.
+
+The script declares its Pillow dependency with inline uv metadata, so it does
+not need to synchronize the project's training dependencies. A Python runtime
+with tkinter is required (verified in this project's Windows environment).
+
 ## Outputs
 
 To inspect specific mistakes without rerunning inference:
