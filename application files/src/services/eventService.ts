@@ -14,7 +14,6 @@ import {
   limit,
   ref,
   uploadBytesResumable,
-  uploadString,
   getDownloadURL,
   deleteObject,
   serverTimestamp,
@@ -36,53 +35,6 @@ function sanitizePayload<T extends Record<string, any>>(obj: T): T {
     }
   }
   return result as T;
-}
-
-// Helper to compress and downsample large photographer files into high-quality, web-ready JPEGs
-async function compressImageFile(file: File, maxDim = 1920, quality = 0.85): Promise<string> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onerror = () => {
-      resolve('');
-    };
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      if (!file.type.startsWith('image/')) {
-        resolve(dataUrl);
-        return;
-      }
-      const img = new Image();
-      img.onerror = () => resolve(dataUrl);
-      img.onload = () => {
-        try {
-          let { width, height } = img;
-          if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(dataUrl);
-            return;
-          }
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', quality));
-        } catch {
-          resolve(dataUrl);
-        }
-      };
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  });
 }
 
 export const eventService = {
@@ -354,32 +306,36 @@ export const eventService = {
     onProgress?: (pct: number) => void
   ): Promise<PhotoRecord> {
     const photoId = 'ph_' + Math.random().toString(36).substring(2, 12);
-    const storagePath = `photographers/${eventId}/${photoId}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const storagePath = `photographers/${eventId}/${photoId}`;
+
+    if (!file.type.startsWith('image/')) {
+      throw new Error(`${file.name} is not an image.`);
+    }
+    if (file.size > 30 * 1024 * 1024) {
+      throw new Error(`${file.name} exceeds the 30 MB processing limit.`);
+    }
 
     if (onProgress) onProgress(15);
 
-    // 1. Read & optimize the image
-    const optimizedDataUrl = await compressImageFile(file, 1920, 0.85);
-    if (onProgress) onProgress(45);
-
-    let downloadUrl = optimizedDataUrl;
-
-    // 2. Upload to Firebase Storage if available
-    try {
-      const storageRef = ref(storage, storagePath);
-      const uploadPromise = uploadString(storageRef, optimizedDataUrl, 'data_url');
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Storage upload timeout')), 2500)
+    // Store the exact original bytes. The face-matching job and attendee gallery
+    // both use this same private object.
+    const storageRef = ref(storage, storagePath);
+    const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
+    const uploadResult = await new Promise<any>((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          const uploadProgress = snapshot.totalBytes
+            ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 70)
+            : 0;
+          if (onProgress) onProgress(15 + uploadProgress);
+        },
+        reject,
+        () => resolve(uploadTask.snapshot)
       );
-      if (onProgress) onProgress(75);
-      const uploadResult = (await Promise.race([uploadPromise, timeoutPromise])) as any;
-      const onlineUrl = await getDownloadURL(uploadResult.ref);
-      if (onlineUrl) downloadUrl = onlineUrl;
-      if (onProgress) onProgress(90);
-    } catch (storageErr) {
-      console.warn('Storage bucket upload notice, using secure compressed reference:', storageErr);
-      if (onProgress) onProgress(85);
-    }
+    });
+    const downloadUrl = await getDownloadURL(uploadResult.ref);
+    if (onProgress) onProgress(90);
 
     // 3. Construct master photo record with eventId and event_id
     const photoRecord: PhotoRecord = {
@@ -390,6 +346,7 @@ export const eventService = {
       uploadedByEmail: uploaderEmail || 'photographer@lumina.event',
       uploadedAt: new Date().toISOString(),
       storagePath,
+      rawStoragePath: storagePath,
       downloadUrl,
       fileName: file.name,
       fileSize: file.size,

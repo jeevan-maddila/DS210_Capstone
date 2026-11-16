@@ -5,6 +5,7 @@ import { SuperAdminPortal } from './components/admin/SuperAdminPortal';
 import { EventManagerPortal } from './components/manager/EventManagerPortal';
 import { PhotographerPortal } from './components/photographer/PhotographerPortal';
 import { AttendeeCheckInPage } from './components/attendee/AttendeeCheckInPage';
+import { AttendeeGalleryPage } from './components/attendee/AttendeeGalleryPage';
 import { eventService } from './services/eventService';
 import { EventItem } from './types';
 import { RefreshCw, Shield, Camera, UserCheck, Sparkles, ExternalLink, Calendar, ShieldAlert } from 'lucide-react';
@@ -12,12 +13,23 @@ import { AuthModal } from './components/AuthModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 const MainApp: React.FC = () => {
-  const { user, profile, role, loading, isSuperAdmin, isManager, isPhotographer } = useAuth();
+  const {
+    user,
+    profile,
+    role,
+    loading,
+    isSuperAdmin,
+    pendingInvitationToken,
+    invitationStatus,
+    invitationError,
+    retryInvitation
+  } = useAuth();
   const [currentSurface, setCurrentSurface] = useState<ActiveSurface>('manager');
   const [checkInEventId, setCheckInEventId] = useState<string | null>(null);
   const [availableEvents, setAvailableEvents] = useState<EventItem[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const galleryToken = new URLSearchParams(window.location.search).get('gallery');
 
   // Check URL params on initial mount
   useEffect(() => {
@@ -44,10 +56,22 @@ const MainApp: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (!loading && pendingInvitationToken && !user) {
+      setCurrentSurface('photographer');
+      setShowAuthModal(true);
+    }
+  }, [loading, pendingInvitationToken, user]);
+
   // Sync role to surface if user logs in
   useEffect(() => {
     if (user && profile) {
       if (currentSurface !== 'attendee') {
+        const requestedPortal = new URLSearchParams(window.location.search).get('portal');
+        if (requestedPortal === 'photographer') {
+          setCurrentSurface('photographer');
+          return;
+        }
         if (profile.role === 'super_admin' || isSuperAdmin) {
           setCurrentSurface('admin');
         } else if (profile.role === 'photographer') {
@@ -97,6 +121,10 @@ const MainApp: React.FC = () => {
     const newUrl = window.location.pathname;
     window.history.pushState({ path: newUrl }, '', newUrl);
   };
+
+  if (galleryToken) {
+    return <AttendeeGalleryPage token={galleryToken} />;
+  }
 
   if (loading) {
     return (
@@ -192,6 +220,31 @@ const MainApp: React.FC = () => {
         onSurfaceChange={setCurrentSurface}
         activeCheckInEventId={checkInEventId}
       />
+
+      {user && invitationStatus === 'error' && (
+        <div className="bg-rose-50 border-b border-rose-200 px-4 py-3 text-xs text-rose-900">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <span className="font-semibold">Invitation could not be accepted.</span>{' '}
+              {invitationError || 'Please check the invitation and try again.'}
+            </div>
+            <button
+              onClick={retryInvitation}
+              className="px-3 py-1.5 rounded-lg bg-rose-700 hover:bg-rose-800 text-white font-semibold"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {user && invitationStatus === 'accepted' && (
+        <div className="bg-emerald-50 border-b border-emerald-200 px-4 py-3 text-xs text-emerald-900">
+          <div className="max-w-7xl mx-auto font-semibold">
+            Invitation accepted. You now have access to the event in the Photographer Portal.
+          </div>
+        </div>
+      )}
 
       {/* Auth Guard Banner if user is not signed in */}
       {!user ? (

@@ -28,7 +28,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   onSurfaceChange,
   activeCheckInEventId
 }) => {
-  const { user, profile, role, isSuperAdmin, isManager, isPhotographer, updateRole, logOut } = useAuth();
+  const { user, profile, role, isSuperAdmin, isDemoMode, updateRole, logOut } = useAuth();
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
@@ -167,7 +167,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                       </div>
 
                       {/* Demo Role Switcher Section */}
-                      <div className="py-1 border-b border-slate-700/80 mb-1">
+                      {isDemoMode && <div className="py-1 border-b border-slate-700/80 mb-1">
                         <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-3 py-1">
                           Switch Role (Demo Mode)
                         </div>
@@ -215,7 +215,7 @@ export const Navigation: React.FC<NavigationProps> = ({
                           </span>
                           {role === 'photographer' && <span className="text-[10px]">✓</span>}
                         </button>
-                      </div>
+                      </div>}
 
                       <button
                         onClick={() => logOut()}

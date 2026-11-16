@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
 import { LogIn, Sparkles, Mail, Lock, User, Check, X, Shield, Camera, ShieldAlert } from 'lucide-react';
@@ -10,7 +10,7 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRole = 'event_manager' }) => {
-  const { signInWithGoogle, signInWithDemo, signInWithEmail, signUpWithEmail } = useAuth();
+  const { signInWithGoogle, signInWithDemo, signInWithEmail, signUpWithEmail, pendingInvitationToken } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [role, setRole] = useState<UserRole>(defaultRole);
   const [email, setEmail] = useState('');
@@ -18,6 +18,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
   const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRole(defaultRole);
+  }, [defaultRole]);
 
   if (!isOpen) return null;
 
@@ -89,8 +93,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
           </div>
         )}
 
+        {pendingInvitationToken && (
+          <div className="mb-5 p-3.5 bg-indigo-50 rounded-2xl border border-indigo-200 text-xs text-indigo-900">
+            Sign in using the email address that received this photographer invitation.
+          </div>
+        )}
+
         {/* Quick Demo Logins for Fast Evaluation */}
-        <div className="mb-5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
+        {!pendingInvitationToken && <div className="mb-5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1">
             <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
             Quick Demo Login (One-Click)
@@ -121,7 +131,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
               <span>Photographer</span>
             </button>
           </div>
-        </div>
+        </div>}
 
         {/* Google SSO */}
         <button
@@ -180,7 +190,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
                 </div>
               </div>
 
-              <div>
+              {!pendingInvitationToken && <div>
                 <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                   Initial Role
                 </label>
@@ -208,7 +218,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
                     Photographer
                   </button>
                 </div>
-              </div>
+              </div>}
             </>
           )}
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   auth,
   db,
@@ -10,11 +10,39 @@ import {
   onAuthStateChanged,
   doc,
   getDoc,
-  setDoc,
-  updateDoc
+  setDoc
 } from '../lib/firebase';
 import { User } from 'firebase/auth';
 import { UserProfile, UserRole } from '../types';
+import { invitationService } from '../services/invitationService';
+
+const INVITATION_TOKEN_KEY = 'lumina_pending_invitation_token';
+
+export type InvitationStatus = 'idle' | 'waiting_for_sign_in' | 'accepting' | 'accepted' | 'error';
+
+function getStoredInvitationToken(): string | null {
+  const tokenFromUrl = new URLSearchParams(window.location.search).get('invite');
+  const tokenFromFragment = new URLSearchParams(window.location.hash.slice(1)).get('invite');
+  return tokenFromUrl || tokenFromFragment || sessionStorage.getItem(INVITATION_TOKEN_KEY);
+}
+
+function removeInvitationTokenFromUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('invite');
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  fragment.delete('invite');
+  url.hash = fragment.toString();
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function removeLegacyInvitationParamsFromUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('inviteEvent') && !url.searchParams.has('inviteEmail')) return;
+
+  url.searchParams.delete('inviteEvent');
+  url.searchParams.delete('inviteEmail');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
 
 interface AuthContextType {
   user: User | null;
@@ -24,13 +52,18 @@ interface AuthContextType {
   isSuperAdmin: boolean;
   isManager: boolean;
   isPhotographer: boolean;
+  isDemoMode: boolean;
+  pendingInvitationToken: string | null;
+  invitationStatus: InvitationStatus;
+  invitationError: string | null;
+  acceptedInvitationEventId: string | null;
+  retryInvitation: () => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signInWithDemo: (role: UserRole, customEmail?: string) => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, role: UserRole, displayName?: string) => Promise<void>;
   logOut: () => Promise<void>;
   updateRole: (newRole: UserRole) => Promise<void>;
-  assignEventToUser: (eventId: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -39,21 +72,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingInvitationToken, setPendingInvitationToken] = useState<string | null>(getStoredInvitationToken);
+  const [invitationStatus, setInvitationStatus] = useState<InvitationStatus>(
+    pendingInvitationToken ? 'waiting_for_sign_in' : 'idle'
+  );
+  const [invitationError, setInvitationError] = useState<string | null>(null);
+  const [acceptedInvitationEventId, setAcceptedInvitationEventId] = useState<string | null>(null);
+  const acceptingInvitationRef = useRef<string | null>(null);
+  const pendingSignUpRef = useRef<{ role: UserRole; displayName?: string } | null>(null);
 
-  // Check for invite params in URL on load
+  // Preserve the opaque token while the photographer completes sign-in.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const inviteEventId = params.get('inviteEvent');
-    const inviteEmail = params.get('inviteEmail');
-    if (inviteEventId) {
-      sessionStorage.setItem('lumina_pending_invite_event', inviteEventId);
-      if (inviteEmail) {
-        sessionStorage.setItem('lumina_pending_invite_email', inviteEmail);
-      }
+    if (pendingInvitationToken) {
+      sessionStorage.setItem(INVITATION_TOKEN_KEY, pendingInvitationToken);
+      removeInvitationTokenFromUrl();
+    }
+
+    // Old invite URLs are intentionally no longer trusted.
+    sessionStorage.removeItem('lumina_pending_invite_event');
+    sessionStorage.removeItem('lumina_pending_invite_email');
+    removeLegacyInvitationParamsFromUrl();
+
+    // Real Firebase authentication is required to accept invitations.
+    if (pendingInvitationToken) {
+      sessionStorage.removeItem('lumina_demo_session');
     }
 
     // Check for saved demo session
-    const savedDemo = sessionStorage.getItem('lumina_demo_session');
+    const savedDemo = pendingInvitationToken ? null : sessionStorage.getItem('lumina_demo_session');
     if (savedDemo) {
       try {
         const parsed = JSON.parse(savedDemo);
@@ -65,40 +111,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const loadOrCreateProfile = async (firebaseUser: User, desiredRole?: UserRole) => {
+  const loadOrCreateProfile = async (
+    firebaseUser: User,
+    desiredRole?: UserRole,
+    desiredDisplayName?: string
+  ) => {
     const userDocRef = doc(db, 'users', firebaseUser.uid);
     try {
       const snap = await getDoc(userDocRef);
-      const pendingInviteEvent = sessionStorage.getItem('lumina_pending_invite_event');
+      const hasPendingInvitation = Boolean(sessionStorage.getItem(INVITATION_TOKEN_KEY));
       const isSpecialAdmin = firebaseUser.email?.toLowerCase() === 'thomas.leffler2@gmail.com';
 
       if (snap.exists()) {
         const data = snap.data() as UserProfile;
         if (isSpecialAdmin && data.role !== 'super_admin') {
           data.role = 'super_admin';
-          await updateDoc(userDocRef, { role: 'super_admin' }).catch(() => {});
-        }
-        if (pendingInviteEvent && !data.assignedEvents?.includes(pendingInviteEvent)) {
-          const updatedEvents = [...(data.assignedEvents || []), pendingInviteEvent];
-          await updateDoc(userDocRef, {
-            assignedEvents: updatedEvents,
-            role: 'photographer'
-          });
-          data.assignedEvents = updatedEvents;
-          data.role = 'photographer';
-          sessionStorage.removeItem('lumina_pending_invite_event');
         }
         setProfile(data);
       } else {
         const initialRole: UserRole = isSpecialAdmin
           ? 'super_admin'
-          : desiredRole || (pendingInviteEvent ? 'photographer' : 'event_manager');
-        const assignedEvents: string[] = pendingInviteEvent ? [pendingInviteEvent] : [];
+          : hasPendingInvitation
+          ? 'photographer'
+          : desiredRole || 'event_manager';
 
         const newProfile: UserProfile = {
           uid: firebaseUser.uid,
           email: firebaseUser.email || `${firebaseUser.uid}@lumina.local`,
           displayName:
+            desiredDisplayName?.trim() ||
             firebaseUser.displayName ||
             (isSpecialAdmin
               ? 'Super Admin'
@@ -106,7 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ? 'Event Director'
               : 'Event Photographer'),
           role: initialRole,
-          assignedEvents,
+          assignedEvents: [],
           inviteStatus: 'active',
           createdAt: new Date().toISOString()
         };
@@ -117,9 +158,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Could not save user profile doc:', e);
         }
 
-        if (pendingInviteEvent) {
-          sessionStorage.removeItem('lumina_pending_invite_event');
-        }
         setProfile(newProfile);
       }
     } catch (err) {
@@ -128,19 +166,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         uid: firebaseUser.uid,
         email: firebaseUser.email || 'user@example.com',
         displayName: firebaseUser.displayName || 'Event User',
-        role: desiredRole || 'event_manager',
+        role: sessionStorage.getItem(INVITATION_TOKEN_KEY) ? 'photographer' : desiredRole || 'event_manager',
         assignedEvents: [],
         inviteStatus: 'active'
       });
     }
   };
 
+  const acceptInvitation = async (firebaseUser: User, token: string) => {
+    if (acceptingInvitationRef.current === token) return;
+
+    acceptingInvitationRef.current = token;
+    setInvitationStatus('accepting');
+    setInvitationError(null);
+
+    try {
+      const result = await invitationService.accept(token);
+      const profileSnapshot = await getDoc(doc(db, 'users', firebaseUser.uid));
+      if (profileSnapshot.exists()) {
+        setProfile(profileSnapshot.data() as UserProfile);
+      }
+
+      sessionStorage.removeItem(INVITATION_TOKEN_KEY);
+      setPendingInvitationToken(null);
+      setAcceptedInvitationEventId(result.eventId);
+      setInvitationStatus('accepted');
+      removeInvitationTokenFromUrl();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not accept this invitation.';
+      setInvitationError(message);
+      setInvitationStatus('error');
+    } finally {
+      acceptingInvitationRef.current = null;
+    }
+  };
+
+  const retryInvitation = async () => {
+    if (!auth.currentUser || !pendingInvitationToken) return;
+    await acceptInvitation(auth.currentUser, pendingInvitationToken);
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
+        setLoading(true);
         setUser(currentUser);
         sessionStorage.removeItem('lumina_demo_session');
-        await loadOrCreateProfile(currentUser);
+        const pendingSignUp = pendingSignUpRef.current;
+        await loadOrCreateProfile(currentUser, pendingSignUp?.role, pendingSignUp?.displayName);
+        pendingSignUpRef.current = null;
+        const token = getStoredInvitationToken();
+        if (token) {
+          await acceptInvitation(currentUser, token);
+        }
       } else {
         // If not authenticated via Firebase, check if demo session exists
         const savedDemo = sessionStorage.getItem('lumina_demo_session');
@@ -156,21 +234,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const handleGoogleSignIn = async () => {
-    setLoading(true);
     try {
-      const res = await signInWithPopup(auth, googleProvider);
+      await signInWithPopup(auth, googleProvider);
       sessionStorage.removeItem('lumina_demo_session');
-      await loadOrCreateProfile(res.user);
     } catch (err: any) {
       console.error('Google Sign In failed:', err);
       throw err;
-    } finally {
-      setLoading(false);
     }
   };
 
   // Instant Demo Login (simulates full authenticated session without requiring email/password provider to be enabled)
   const handleDemoSignIn = async (desiredRole: UserRole, customEmail?: string) => {
+    if (pendingInvitationToken) {
+      throw new Error('Use Google or email sign-in to accept a photographer invitation.');
+    }
     setLoading(true);
     try {
       const isAdmin = desiredRole === 'super_admin';
@@ -222,11 +299,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const handleEmailSignIn = async (email: string, pass: string) => {
-    setLoading(true);
     try {
-      const res = await signInWithEmailAndPassword(auth, email, pass);
+      await signInWithEmailAndPassword(auth, email, pass);
       sessionStorage.removeItem('lumina_demo_session');
-      await loadOrCreateProfile(res.user);
     } catch (err: any) {
       if (err.code === 'auth/operation-not-allowed') {
         throw new Error(
@@ -234,26 +309,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       }
       throw err;
-    } finally {
-      setLoading(false);
     }
   };
 
   const handleEmailSignUp = async (email: string, pass: string, desiredRole: UserRole, displayName?: string) => {
-    setLoading(true);
+    pendingSignUpRef.current = { role: desiredRole, displayName };
     try {
-      const res = await createUserWithEmailAndPassword(auth, email, pass);
+      await createUserWithEmailAndPassword(auth, email, pass);
       sessionStorage.removeItem('lumina_demo_session');
-      await loadOrCreateProfile(res.user, desiredRole);
     } catch (err: any) {
+      pendingSignUpRef.current = null;
       if (err.code === 'auth/operation-not-allowed') {
         throw new Error(
           'Email/Password sign-up is disabled in this Firebase project. Please use "Continue with Google" or "Quick Demo Login".'
         );
       }
       throw err;
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -270,38 +341,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateRole = async (newRole: UserRole) => {
     if (!user) return;
-    try {
-      const userDocRef = doc(db, 'users', user.uid);
-      await updateDoc(userDocRef, { role: newRole });
-    } catch (err) {
-      console.warn('Profile role update error:', err);
-    }
-    setProfile((prev) => (prev ? { ...prev, role: newRole } : null));
-    if (sessionStorage.getItem('lumina_demo_session')) {
-      const saved = JSON.parse(sessionStorage.getItem('lumina_demo_session')!);
-      saved.profile.role = newRole;
-      sessionStorage.setItem('lumina_demo_session', JSON.stringify(saved));
-    }
-  };
+    const savedDemoSession = sessionStorage.getItem('lumina_demo_session');
+    if (!savedDemoSession) return;
 
-  const assignEventToUser = async (eventId: string) => {
-    if (!user || !profile) return;
-    const current = profile.assignedEvents || [];
-    if (!current.includes(eventId)) {
-      const updated = [...current, eventId];
-      try {
-        const userDocRef = doc(db, 'users', user.uid);
-        await updateDoc(userDocRef, { assignedEvents: updated });
-      } catch (e) {
-        console.warn('Assign event error:', e);
-      }
-      setProfile({ ...profile, assignedEvents: updated });
-    }
+    const saved = JSON.parse(savedDemoSession);
+    saved.profile.role = newRole;
+    sessionStorage.setItem('lumina_demo_session', JSON.stringify(saved));
+    setProfile((previous) => (previous ? { ...previous, role: newRole } : null));
   };
 
   const isUserEmailSpecialAdmin = user?.email?.toLowerCase() === 'thomas.leffler2@gmail.com';
   const activeRole: UserRole = profile?.role || (isUserEmailSpecialAdmin ? 'super_admin' : 'event_manager');
   const isSuperAdmin = activeRole === 'super_admin' || isUserEmailSpecialAdmin;
+  const isDemoMode = Boolean(sessionStorage.getItem('lumina_demo_session'));
 
   return (
     <AuthContext.Provider
@@ -313,13 +365,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isSuperAdmin,
         isManager: activeRole === 'event_manager' || isSuperAdmin,
         isPhotographer: activeRole === 'photographer',
+        isDemoMode,
+        pendingInvitationToken,
+        invitationStatus,
+        invitationError,
+        acceptedInvitationEventId,
+        retryInvitation,
         signInWithGoogle: handleGoogleSignIn,
         signInWithDemo: handleDemoSignIn,
         signInWithEmail: handleEmailSignIn,
         signUpWithEmail: handleEmailSignUp,
         logOut: handleLogOut,
-        updateRole,
-        assignEventToUser
+        updateRole
       }}
     >
       {children}

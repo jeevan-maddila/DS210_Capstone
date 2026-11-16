@@ -37,7 +37,9 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { eventService } from '../../services/eventService';
-import { EventItem, AttendeeRecord, PhotoRecord, CustomField, AssignedPhotographer } from '../../types';
+import { invitationService } from '../../services/invitationService';
+import { galleryService } from '../../services/galleryService';
+import { EventItem, AttendeeRecord, PhotoRecord, CustomField } from '../../types';
 
 interface EventManagerPortalProps {
   onOpenCheckIn: (eventId: string) => void;
@@ -46,7 +48,7 @@ interface EventManagerPortalProps {
 type TabType = 'overview' | 'attendees' | 'gallery' | 'settings';
 
 export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCheckIn }) => {
-  const { user, profile } = useAuth();
+  const { user, profile, isDemoMode } = useAuth();
   const [events, setEvents] = useState<EventItem[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -81,7 +83,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   // Photographer Invite Modal / Form
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitingPhotographer, setInvitingPhotographer] = useState(false);
-  const [inviteSuccessLink, setInviteSuccessLink] = useState<string | null>(null);
+  const [invitedPhotographerEmail, setInvitedPhotographerEmail] = useState<string | null>(null);
 
   // Attendee View Filtering & Sorting
   const [attendeeSearch, setAttendeeSearch] = useState('');
@@ -132,6 +134,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   };
 
   const [isUnblockingPhotos, setIsUnblockingPhotos] = useState(false);
+  const [showReleaseGalleryModal, setShowReleaseGalleryModal] = useState(false);
+  const [releasingGalleries, setReleasingGalleries] = useState(false);
 
   const handleUnblockPhotos = async () => {
     if (!selectedEventId) return;
@@ -144,6 +148,36 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       showToast('Error unblocking photos: ' + err.message, 'error');
     } finally {
       setIsUnblockingPhotos(false);
+    }
+  };
+
+  const handleReleaseGalleries = async () => {
+    if (!selectedEventId) return;
+    if (isDemoMode) {
+      showToast('Sign in with a Firebase manager account to release attendee galleries.', 'error');
+      return;
+    }
+    setReleasingGalleries(true);
+    try {
+      const result = await galleryService.release(selectedEventId);
+      setShowReleaseGalleryModal(false);
+      if (result.failed > 0) {
+        showToast(
+          `Sent ${result.sent} gallery email(s); ${result.failed} failed. Use Release again to retry failed deliveries.`,
+          'error'
+        );
+      } else if (result.sent === 0 && result.skipped > 0) {
+        showToast('All current attendee galleries were already released. No duplicate emails were sent.', 'info');
+      } else {
+        showToast(
+          `Sent ${result.sent} private gallery email(s)${result.skipped ? `; skipped ${result.skipped} unchanged galleries` : ''}.`,
+          'success'
+        );
+      }
+    } catch (err: any) {
+      showToast('Error releasing galleries: ' + err.message, 'error');
+    } finally {
+      setReleasingGalleries(false);
     }
   };
 
@@ -333,41 +367,28 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   const handleInvitePhotographer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeEvent || !inviteEmail.trim()) return;
+    if (isDemoMode) {
+      showToast('Sign in with a Firebase manager account to send invitation emails.', 'error');
+      return;
+    }
     setInvitingPhotographer(true);
 
     try {
       const email = inviteEmail.trim().toLowerCase();
-      const existing = activeEvent.assignedPhotographers || [];
-      if (existing.some((p) => p.email.toLowerCase() === email)) {
+      if (
+        activeEvent.assignedPhotographers?.some(
+          (photographer) => photographer.email.toLowerCase() === email && photographer.inviteStatus === 'active'
+        )
+      ) {
         showToast('This photographer is already assigned to this event.', 'error');
-        setInvitingPhotographer(false);
         return;
       }
 
-      const updatedPhotographers: AssignedPhotographer[] = [
-        ...existing,
-        {
-          email,
-          inviteStatus: 'pending',
-          assignedAt: new Date().toISOString()
-        }
-      ];
-
-      const updatedEmails = Array.from(new Set([...(activeEvent.photographerEmails || []), email]));
-
-      await eventService.updateEvent(activeEvent.id, {
-        assignedPhotographers: updatedPhotographers,
-        photographerEmails: updatedEmails
-      });
-
-      // Construct direct invite link
-      const inviteUrl = `${window.location.origin}/?inviteEvent=${activeEvent.id}&inviteEmail=${encodeURIComponent(
-        email
-      )}&portal=photographer`;
-      setInviteSuccessLink(inviteUrl);
+      await invitationService.create(activeEvent.id, email);
+      setInvitedPhotographerEmail(email);
       setInviteEmail('');
       await loadEvents();
-      showToast('Photographer invited successfully!', 'success');
+      showToast(`Invitation sent to ${email}.`, 'success');
     } catch (err: any) {
       showToast('Error inviting photographer: ' + err.message, 'error');
     } finally {
@@ -508,6 +529,16 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   // Pending / Processed Photo & Attendee Partitions
   const pendingPhotos = useMemo(() => photos.filter((p) => p.status === 'pending'), [photos]);
   const processedPhotos = useMemo(() => photos.filter((p) => p.status === 'processed' || p.status === 'flagged'), [photos]);
+  const galleryRecipientCount = useMemo(() => {
+    const matchedAttendeeIds = new Set(
+      photos
+        .filter((photo) => photo.status === 'processed')
+        .flatMap((photo) => photo.matchedAttendees || [])
+    );
+    return attendees.filter(
+      (attendee) => attendee.photoConsentGiven && attendee.email && matchedAttendeeIds.has(attendee.id)
+    ).length;
+  }, [attendees, photos]);
   const pendingVectorAttendees = useMemo(
     () => attendees.filter((a) => a.checkInPhotoUrl && (!a.photoEmbedding || a.photoEmbedding.length !== 512)),
     [attendees]
@@ -1021,7 +1052,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                           Assigned Photographers
                         </h3>
                         <p className="text-xs text-slate-500">
-                          Invite photographers by email. The system generates an invite link that assigns them upon login.
+                          Invite photographers by email. Access is activated after they sign in using the invited address.
                         </p>
                       </div>
                     </div>
@@ -1049,26 +1080,17 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                       </button>
                     </form>
 
-                    {/* Invite link generated feedback */}
-                    {inviteSuccessLink && (
+                    {/* Invitation delivery feedback */}
+                    {invitedPhotographerEmail && (
                       <div className="mb-6 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-2">
                         <div className="font-semibold flex items-center gap-1.5 text-emerald-800">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          Photographer Invitation Ready!
+                          Photographer invitation sent
                         </div>
-                        <p>Share this direct assignment link with the photographer:</p>
-                        <div className="p-2 bg-white rounded-lg border border-emerald-200 font-mono text-[11px] text-slate-700 break-all select-all flex items-center justify-between gap-2">
-                          <span className="truncate">{inviteSuccessLink}</span>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(inviteSuccessLink);
-                              showToast('Invite link copied to clipboard!', 'success');
-                            }}
-                            className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded text-[10px] font-semibold flex-shrink-0"
-                          >
-                            Copy
-                          </button>
-                        </div>
+                        <p>
+                          An email was sent to <strong>{invitedPhotographerEmail}</strong>. They will appear below after
+                          signing in and accepting the invitation.
+                        </p>
                       </div>
                     )}
 
@@ -1457,6 +1479,35 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
             {/* TAB 3: PHOTO GALLERY VIEW */}
             {activeTab === 'gallery' && (
               <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-6">
+                <div className="p-5 rounded-2xl bg-indigo-950 text-white flex flex-wrap items-center justify-between gap-4 shadow-sm">
+                  <div className="flex items-center gap-3 min-w-[280px]">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center shrink-0">
+                      <Mail className="w-5 h-5 text-indigo-300" />
+                    </div>
+                    <div>
+                      <div className="font-bold">Release attendee galleries</div>
+                      <p className="text-[11px] text-indigo-200 mt-0.5 max-w-2xl">
+                        Email one private, 30-day gallery link to each consenting attendee matched in a processed photo.
+                        Galleries contain the original, unredacted files.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-indigo-200">
+                      {galleryRecipientCount} eligible {galleryRecipientCount === 1 ? 'attendee' : 'attendees'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowReleaseGalleryModal(true)}
+                      disabled={galleryRecipientCount === 0 || releasingGalleries}
+                      className="px-4 py-2.5 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Mail className="w-3.5 h-3.5" />
+                      Release Galleries
+                    </button>
+                  </div>
+                </div>
+
                 {/* Quarantine Security Notice for Raw Unprocessed Photos */}
                 {pendingPhotos.length > 0 && (
                   <div className="p-4.5 rounded-2xl bg-amber-50/90 border border-amber-200 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
@@ -2255,6 +2306,53 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       )}
 
 
+
+      {/* RELEASE ATTENDEE GALLERIES CONFIRMATION */}
+      {showReleaseGalleryModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mb-4">
+              <Mail className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900">Release attendee galleries?</h3>
+            <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+              Lumina Hub will email up to <strong>{galleryRecipientCount}</strong> consenting attendee
+              {galleryRecipientCount === 1 ? '' : 's'} who have matched photos. Each private link will expose the
+              original, unredacted photographs for 30 days. Unchanged galleries will not receive duplicate email.
+            </p>
+            <div className="mt-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              Confirm that all uploads and face-matching results are complete before releasing.
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setShowReleaseGalleryModal(false)}
+                disabled={releasingGalleries}
+                className="flex-1 py-2.5 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleReleaseGalleries}
+                disabled={releasingGalleries || galleryRecipientCount === 0}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {releasingGalleries ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sending...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="w-3.5 h-3.5" /> Release now
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ATTENDEE PHOTO PREVIEW MODAL */}
       {previewAttendeePhoto && (
