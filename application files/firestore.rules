@@ -1,0 +1,224 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '').lower() == 'thomas.leffler2@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function eventDocument(eventId) {
+      return get(/databases/$(database)/documents/events/$(eventId)).data;
+    }
+
+    function isEventOwner(eventId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/events/$(eventId)) &&
+        eventDocument(eventId).ownerUid == request.auth.uid;
+    }
+
+    function isAssignedPhotographer(eventId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/events/$(eventId)) &&
+        request.auth.uid in eventDocument(eventId).get('photographerUids', []);
+    }
+
+    function canContributeToEvent(eventId) {
+      return isSuperAdmin() || isEventOwner(eventId) || isAssignedPhotographer(eventId);
+    }
+
+    function isValidNewUserProfile(userId) {
+      return request.auth.uid == userId &&
+        incoming().keys().hasAll(['uid', 'email', 'displayName', 'role', 'assignedEvents', 'inviteStatus']) &&
+        incoming().keys().hasOnly(['uid', 'email', 'displayName', 'role', 'assignedEvents', 'inviteStatus', 'createdAt']) &&
+        incoming().uid == userId &&
+        incoming().email == request.auth.token.get('email', '') &&
+        incoming().displayName is string &&
+        incoming().displayName.size() > 0 &&
+        incoming().displayName.size() <= 200 &&
+        incoming().role in ['event_manager', 'photographer'] &&
+        incoming().assignedEvents is list &&
+        incoming().assignedEvents.size() == 0 &&
+        incoming().inviteStatus == 'active';
+    }
+
+    // Admins Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // Users Collection (Master Users Table)
+    match /users/{userId} {
+      allow get: if isSignedIn() && (isSuperAdmin() || request.auth.uid == userId);
+      allow list: if isSuperAdmin();
+      allow create: if isSignedIn() && (isSuperAdmin() || isValidNewUserProfile(userId));
+
+      // Role, invitation state, and event membership are server-managed.
+      allow update: if isSuperAdmin() || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName']) &&
+        incoming().displayName is string &&
+        incoming().displayName.size() > 0 &&
+        incoming().displayName.size() <= 200
+      );
+      allow delete: if isSuperAdmin();
+    }
+
+    // Invitation records contain private emails and token hashes. The Admin SDK
+    // creates and accepts them after authenticating the caller.
+    match /photographerInvitations/{inviteId} {
+      allow read, write: if false;
+    }
+
+    // Private gallery tokens and delivery state are server-only.
+    match /attendeeGalleries/{galleryId} {
+      allow read, write: if false;
+    }
+
+    match /attendeeGalleryDeliveries/{deliveryId} {
+      allow read, write: if false;
+    }
+
+    match /invitations/{inviteId} {
+      allow read, write: if false;
+    }
+
+    // Photos Collection (Master Photos Table - with eventId/event_id column)
+    match /photos/{photoId} {
+      // Photo metadata contains private storage references.
+      allow get, list: if isSignedIn();
+
+      // Creation: Event owner or an accepted photographer for this event.
+      allow create: if isSignedIn() &&
+        incoming().uploadedBy == request.auth.uid &&
+        incoming().eventId is string &&
+        canContributeToEvent(incoming().eventId);
+
+      // Updates: Uploader, Event Owner, Manager, or Super Admin
+      allow update: if isSignedIn() && (
+        isSuperAdmin() ||
+        existing().uploadedBy == request.auth.uid ||
+        isEventOwner(existing().eventId)
+      ) &&
+        incoming().uploadedBy == existing().uploadedBy &&
+        incoming().eventId == existing().eventId;
+
+      // Deletion: Uploader, Event Owner, Manager, or Super Admin
+      allow delete: if isSignedIn() && (
+        isSuperAdmin() ||
+        existing().uploadedBy == request.auth.uid ||
+        isEventOwner(existing().eventId)
+      );
+    }
+
+    // Attendees Collection (Master Attendees Table)
+    match /attendees/{attendeeId} {
+      allow get, list: if isSignedIn() && (
+        isSuperAdmin() || isEventOwner(existing().eventId)
+      );
+
+      // Public check-in submission
+      allow create: if incoming().consentGiven == true &&
+        incoming().fullName is string && incoming().fullName.size() > 0 &&
+        incoming().email is string && incoming().email.size() > 0;
+
+      // Kiosk selfie capture / embedding update
+      allow update: if (
+        isSignedIn() && (isSuperAdmin() || isEventOwner(existing().eventId))
+      ) || incoming().diff(existing()).affectedKeys().hasOnly([
+        'checkInPhotoPath',
+        'checkInPhotoUrl',
+        'photoEmbedding',
+        'deleteOn'
+      ]);
+
+      // Deletion
+      allow delete: if isSignedIn() && (
+        isSuperAdmin() ||
+        isEventOwner(existing().eventId)
+      );
+    }
+
+    // Events Collection (Master Events Table)
+    match /events/{eventId} {
+      // Public read and list for attendee check-in page, discovery, and super admin platform audits
+      allow get, list: if true;
+
+      // A manager can only create an event owned by their own account.
+      allow create: if isSignedIn() && (
+        isSuperAdmin() || incoming().ownerUid == request.auth.uid
+      );
+
+      // Only the event manager who owns the event or a Super Admin can update or delete it
+      allow update: if isSignedIn() &&
+        (isSuperAdmin() || existing().ownerUid == request.auth.uid) &&
+        incoming().ownerUid == existing().ownerUid;
+      allow delete: if isSignedIn() && (isSuperAdmin() || existing().ownerUid == request.auth.uid);
+
+      // Attendees Subcollection: /events/{eventId}/attendees/{attendeeId} (Backward Compatibility)
+      match /attendees/{attendeeId} {
+        allow get, list: if isSignedIn() && (
+          isSuperAdmin() ||
+          get(/databases/$(database)/documents/events/$(eventId)).data.ownerUid == request.auth.uid
+        );
+
+        allow create: if incoming().consentGiven == true &&
+          incoming().fullName is string && incoming().fullName.size() > 0 &&
+          incoming().email is string && incoming().email.size() > 0;
+
+        allow update: if incoming().diff(existing()).affectedKeys().hasOnly(['checkInPhotoPath', 'checkInPhotoUrl', 'photoEmbedding', 'deleteOn']);
+
+        allow delete: if isSignedIn() && (
+          isSuperAdmin() ||
+          get(/databases/$(database)/documents/events/$(eventId)).data.ownerUid == request.auth.uid
+        );
+      }
+
+      // Photos Subcollection: /events/{eventId}/photos/{photoId} (Backward Compatibility)
+      match /photos/{photoId} {
+        allow get, list: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          incoming().uploadedBy == request.auth.uid &&
+          canContributeToEvent(eventId);
+
+        allow update: if isSignedIn() && (
+          isSuperAdmin() ||
+          isEventOwner(eventId) ||
+          existing().uploadedBy == request.auth.uid
+        ) &&
+          incoming().uploadedBy == existing().uploadedBy &&
+          incoming().eventId == existing().eventId;
+
+        allow delete: if isSignedIn() && (
+          isSuperAdmin() ||
+          isEventOwner(eventId) ||
+          existing().uploadedBy == request.auth.uid
+        );
+      }
+    }
+  }
+}

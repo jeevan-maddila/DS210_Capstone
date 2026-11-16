@@ -1,0 +1,10 @@
+{
+  "name": "Lumina Event Photo Hub",
+  "description": "Role-based event photo management platform for Event Managers, Photographers, and Attendee Check-In.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

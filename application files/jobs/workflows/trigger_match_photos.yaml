@@ -1,0 +1,47 @@
+# Eventarc Cloud Storage finalized-event workflow.
+# Pass a scoped GCS notification to the job; never start unscoped containers.
+main:
+  params: [event]
+  steps:
+    - init:
+        assign:
+          - projectId: "mids-capstone-ajt"
+          - location: "us-east1"
+          - jobName: "match-photos"
+          - eventType: ${default(event.type, "")}
+          - objectName: ""
+    - extractObjectName:
+        switch:
+          - condition: ${"data" in event and "name" in event.data}
+            assign:
+              - objectName: ${event.data.name}
+          - condition: ${"data" in event and "message" in event.data and "attributes" in event.data.message and "objectId" in event.data.message.attributes}
+            assign:
+              - objectName: ${event.data.message.attributes.objectId}
+    - filterEvent:
+        switch:
+          - condition: ${eventType != "google.cloud.storage.object.v1.finalized" and eventType != "google.cloud.pubsub.topic.v1.messagePublished"}
+            steps:
+              - returnNotFinalized:
+                  return: "SKIPPED_NOT_FINALIZED"
+          - condition: ${not(text.match_regex(objectName, "^photographers/[^/]+/[^/]+$") or text.match_regex(objectName, "^events/[^/]+/photos/[^/]+$"))}
+            steps:
+              - returnUnrelated:
+                  return: "SKIPPED_UNRELATED_OBJECT"
+    - runJob:
+        call: http.post
+        args:
+          url: ${"https://run.googleapis.com/v2/projects/" + projectId + "/locations/" + location + "/jobs/" + jobName + ":run"}
+          auth:
+            type: OAuth2
+          headers:
+            Content-Type: application/json
+          body:
+            overrides:
+              containerOverrides:
+                - args:
+                    - "--pubsub-message"
+                    - ${json.encode_to_string(event.data)}
+        result: jobExecution
+    - returnResult:
+        return: ${jobExecution.body}

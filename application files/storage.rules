@@ -1,0 +1,50 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidImageUpload(maxSize) {
+      return request.resource != null &&
+        request.resource.size < maxSize &&
+        request.resource.contentType.matches('image/.*');
+    }
+
+    // Attendee check-in selfies: checkin/{eventId}/{fileName} or events/{eventId}/checkin/{attendeeId}
+    // Public write allowed for attendee check-in camera capture with file size constraint (15MB)
+    match /checkin/{eventId}/{fileName} {
+      allow create, update: if isValidImageUpload(15 * 1024 * 1024);
+      allow read: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /events/{eventId}/checkin/{attendeeId} {
+      allow create, update: if isValidImageUpload(15 * 1024 * 1024);
+      allow read: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    // Photographer uploaded event photos: photographers/{eventId}/{fileName} or events/{eventId}/photos/{photoId}
+    // Upload size limit 50MB
+    match /photographers/{eventId}/{fileName} {
+      allow create, update: if isSignedIn() && isValidImageUpload(50 * 1024 * 1024);
+      allow read: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    match /events/{eventId}/photos/{photoId} {
+      allow create, update: if isSignedIn() && isValidImageUpload(50 * 1024 * 1024);
+      allow read: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+
+    // Public attendee galleries stream authorized files through the server.
+    match /{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}

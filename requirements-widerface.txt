@@ -1,0 +1,4 @@
+-r requirements-benchmark.txt
+insightface==2.1
+opencv-python==5.0.0.93
+scipy==1.17.1

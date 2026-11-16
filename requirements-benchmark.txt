@@ -1,0 +1,8 @@
+# Separate inference dependencies; no Firebase or InsightFace build required.
+numpy==2.4.6
+pillow==12.3.0
+scikit-learn==1.9.1
+matplotlib==3.11.2
+onnx==1.23.2
+onnxruntime==1.31.0
+huggingface-hub==2.3.0
