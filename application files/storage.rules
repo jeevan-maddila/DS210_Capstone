@@ -2,49 +2,22 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isValidImageUpload(maxSize) {
-      return request.resource != null &&
-        request.resource.size < maxSize &&
-        request.resource.contentType.matches('image/.*');
-    }
-
-    // Attendee check-in selfies: checkin/{eventId}/{fileName} or events/{eventId}/checkin/{attendeeId}
-    // Public write allowed for attendee check-in camera capture with file size constraint (15MB)
+    // Temporary fail-closed policy. Staff access requires a server-mediated
+    // flow (or another authorization source compatible with Storage rules).
+    // Public check-in photo uploads remain available, but cannot overwrite an
+    // existing object. File size and claimed MIME type are bounded here.
     match /checkin/{eventId}/{fileName} {
-      allow create, update: if isValidImageUpload(15 * 1024 * 1024);
-      allow read: if isSignedIn();
-      allow delete: if isSignedIn();
+      allow create: if request.resource != null &&
+        request.resource.size < 15 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+      allow read, update, delete: if false;
     }
 
-    match /events/{eventId}/checkin/{attendeeId} {
-      allow create, update: if isValidImageUpload(15 * 1024 * 1024);
-      allow read: if isSignedIn();
-      allow delete: if isSignedIn();
-    }
-
-    // Photographer uploaded event photos: photographers/{eventId}/{fileName} or events/{eventId}/photos/{photoId}
-    // Upload size limit 50MB
-    match /photographers/{eventId}/{fileName} {
-      allow create, update: if isSignedIn() && isValidImageUpload(50 * 1024 * 1024);
-      allow read: if isSignedIn();
-      allow delete: if isSignedIn();
-    }
-
-    match /events/{eventId}/photos/{photoId} {
-      allow create, update: if isSignedIn() && isValidImageUpload(50 * 1024 * 1024);
-      allow read: if isSignedIn();
-      allow delete: if isSignedIn();
-    }
-
-    // Public attendee galleries stream authorized files through the server.
+    // Cloud Storage Admin SDK operations run under IAM and bypass these rules.
+    // Firebase download-token URLs can still grant bearer access to existing
+    // objects and must be separately revoked or removed.
     match /{allPaths=**} {
-      allow read: if isSignedIn();
-      allow write: if false;
+      allow read, write: if false;
     }
   }
 }

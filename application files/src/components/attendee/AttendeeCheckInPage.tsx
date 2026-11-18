@@ -27,6 +27,7 @@ import { storage, ref, uploadString, getDownloadURL } from '../../lib/firebase';
 interface AttendeeCheckInPageProps {
   eventId: string;
   onBackToApp?: () => void;
+  previewOnly?: boolean;
 }
 
 type Step = 'form' | 'camera' | 'confirmation';
@@ -39,7 +40,49 @@ const DEFAULT_MARKETING_CHANNELS = [
   'Event Website & Press Releases'
 ];
 
-export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventId, onBackToApp }) => {
+// Advisory checks inspect only a small centered image in the browser.
+function photoQualityTips(source: CanvasImageSource, width: number, height: number): string[] {
+  const tips: string[] = [];
+  const side = Math.min(width, height);
+  if (side < 360) tips.push('For a clearer photo, try a higher-resolution image.');
+  if (!side) return tips;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 128;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return tips;
+    ctx.drawImage(source, (width - side) / 2, (height - side) / 2, side, side, 0, 0, 128, 128);
+    const pixels = ctx.getImageData(0, 0, 128, 128).data;
+    const gray = new Float32Array(128 * 128);
+    let total = 0;
+    for (let i = 0; i < gray.length; i++) {
+      const j = i * 4;
+      gray[i] = 0.299 * pixels[j] + 0.587 * pixels[j + 1] + 0.114 * pixels[j + 2];
+      total += gray[i];
+    }
+    const brightness = total / gray.length;
+    if (brightness < 55) tips.push('This photo looks dark. Try facing a light source.');
+    else if (brightness > 210) tips.push('This photo looks very bright. Try softer, even lighting.');
+    let sum = 0;
+    let squares = 0;
+    let count = 0;
+    for (let y = 1; y < 127; y++) {
+      for (let x = 1; x < 127; x++) {
+        const i = y * 128 + x;
+        const edge = 4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - 128] - gray[i + 128];
+        sum += edge;
+        squares += edge * edge;
+        count++;
+      }
+    }
+    if (squares / count - (sum / count) ** 2 < 30) tips.push('This photo may be blurry. Hold still and try again.');
+  } catch {
+    // Unsupported image analysis must not prevent check-in.
+  }
+  return tips;
+}
+
+export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventId, onBackToApp, previewOnly = false }) => {
   const [event, setEvent] = useState<EventItem | null>(null);
   const [loadingEvent, setLoadingEvent] = useState(true);
   const [eventError, setEventError] = useState<string | null>(null);
@@ -74,6 +117,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [capturedPhotoDataUrl, setCapturedPhotoDataUrl] = useState<string | null>(null);
+  const [qualityTips, setQualityTips] = useState<string[]>([]);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
@@ -115,7 +159,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
           setSelectedChannels(availableChannels);
         }
       } catch (err: any) {
-        setEventError(err.message || 'Failed to load event details');
+        setEventError('Could not load this event. Please check the link and try again.');
       } finally {
         setLoadingEvent(false);
       }
@@ -146,7 +190,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
       const playPromise = videoRef.current.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
-          console.warn('Video auto-play notice:', err);
+          console.warn('Video auto-play notice:');
         });
       }
     }
@@ -189,6 +233,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (previewOnly) return;
     if (!fullName.trim() || !email.trim()) {
       setErrorMessage('Please provide both your name and email address to check in.');
       return;
@@ -221,8 +266,8 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
         setStep('confirmation');
       }
     } catch (err: any) {
-      console.error('Check-in error:', err);
-      setErrorMessage(err.message || 'Check-in failed. Please verify your details and try again.');
+      console.error('Check-in error:');
+      setErrorMessage('Check-in failed. Please verify your details and try again.');
     } finally {
       setSubmitting(false);
     }
@@ -253,11 +298,11 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
         try {
           await videoRef.current.play();
         } catch (e) {
-          console.warn('Direct play error:', e);
+          console.warn('Direct play error:');
         }
       }
     } catch (err: any) {
-      console.warn('Camera access unavailable:', err);
+      console.warn('Camera access unavailable:');
       setCameraError('Camera access could not be established. You can upload a photo or skip this step.');
       setCameraActive(false);
     } finally {
@@ -279,9 +324,11 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const rawWidth = video.videoWidth || 640;
-    const rawHeight = video.videoHeight || 480;
+    const rawWidth = video.videoWidth;
+    const rawHeight = video.videoHeight;
+    if (!rawWidth || !rawHeight) return;
     const rawSize = Math.min(rawWidth, rawHeight);
+    setQualityTips(photoQualityTips(video, rawWidth, rawHeight));
 
     // Scale down to max 360x360 square thumbnail (~25 KB)
     const targetSize = Math.min(360, rawSize);
@@ -307,8 +354,9 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
+        setQualityTips(photoQualityTips(img, img.naturalWidth, img.naturalHeight));
         const canvas = canvasRef.current || document.createElement('canvas');
-        const targetSize = 360;
+        const targetSize = Math.min(360, img.naturalWidth, img.naturalHeight);
         canvas.width = targetSize;
         canvas.height = targetSize;
         const ctx = canvas.getContext('2d');
@@ -322,18 +370,23 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
           setCapturedPhotoDataUrl(reader.result as string);
         }
       };
+      img.onerror = () => setCameraError('This image could not be opened. Try another photo.');
       img.src = reader.result as string;
     };
+    reader.onerror = () => setCameraError('This image could not be opened. Try another photo.');
+    setCameraError(null);
     reader.readAsDataURL(file);
   };
 
   const handleRetake = () => {
     setCapturedPhotoDataUrl(null);
+    setQualityTips([]);
     startCamera();
   };
 
-  // Confirm photo upload with guaranteed completion and short timeout
+  // Upload only after the attendee confirms the preview.
   const handleConfirmPhoto = async () => {
+    if (previewOnly) return;
     if (!capturedPhotoDataUrl || !attendeeId) return;
     setUploadingPhoto(true);
     setCameraError(null);
@@ -341,35 +394,23 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
     const storagePath = `checkin/${eventId}/${attendeeId}.jpg`;
     try {
       const storageRef = ref(storage, storagePath);
-      // Guarantee downloadUrl is at least the lightweight compressed data URL (~25KB)
-      let downloadUrl = capturedPhotoDataUrl;
-
-      // Wrap uploadString with a 2-second timeout to avoid indefinite hanging on Storage
-      try {
-        const uploadPromise = uploadString(storageRef, capturedPhotoDataUrl, 'data_url');
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Storage upload timeout')), 2000)
-        );
-        const uploadResult = (await Promise.race([uploadPromise, timeoutPromise])) as any;
-        const onlineUrl = await getDownloadURL(uploadResult.ref);
-        if (onlineUrl) downloadUrl = onlineUrl;
-      } catch (storageErr) {
-        console.warn('Storage bucket upload notice, using secure compressed reference:', storageErr);
-      }
-
+      const uploadResult = await uploadString(storageRef, capturedPhotoDataUrl, 'data_url');
+      const downloadUrl = await getDownloadURL(uploadResult.ref);
       await eventService.updateAttendeePhoto(eventId, attendeeId, storagePath, downloadUrl);
-    } catch (err: any) {
-      console.warn('Photo update notice:', err);
-    } finally {
-      // GUARANTEED: Transition to confirmation step immediately without indefinite spinner
-      setUploadingPhoto(false);
       stopCamera();
       setStep('confirmation');
+    } catch (err: any) {
+      console.warn('Photo upload or update failed');
+      setCameraError('Your photo could not be saved. Please try again or skip this step.');
+    } finally {
+      setUploadingPhoto(false);
     }
   };
 
   const handleSkipPhoto = () => {
     stopCamera();
+    setCapturedPhotoDataUrl(null);
+    setQualityTips([]);
     setStep('confirmation');
   };
 
@@ -380,6 +421,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
     setSelectedSessions([]);
     setDietaryAccessibility('');
     setPhotoConsentGiven(false);
+    setQualityTips([]);
     setAttendeeId(null);
     setCapturedPhotoDataUrl(null);
     setCameraActive(false);
@@ -437,12 +479,12 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
           <p className="text-sm text-slate-600 mt-2 mb-6">
             {eventError || 'The event you requested could not be located. Please check the URL link.'}
           </p>
-          {onBackToApp && (
+          {previewOnly && onBackToApp && (
             <button
               onClick={onBackToApp}
               className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-sm font-medium transition"
             >
-              Return to Hub Dashboard
+              Return to event
             </button>
           )}
         </div>
@@ -460,15 +502,19 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
               <UserCheck className="w-3.5 h-3.5" />
               Official Attendee Check-In
             </div>
-            {onBackToApp && (
+            {previewOnly && onBackToApp && (
               <button
                 onClick={onBackToApp}
                 className="text-xs font-medium text-slate-500 hover:text-slate-900 transition flex items-center gap-1 cursor-pointer"
               >
-                Exit to Portal &rarr;
+                Return to event &rarr;
               </button>
             )}
           </div>
+
+          {previewOnly && <p className="mt-4 rounded-xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-900">
+            Read-only preview. Check-in submission and photo capture are disabled.
+          </p>}
 
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mt-4 tracking-tight">
             {event.name}
@@ -488,6 +534,24 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
           </div>
         </header>
 
+        <nav aria-label="Check-in progress" className="mb-6 rounded-2xl border border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <ol className="flex items-start justify-between gap-2 text-xs sm:text-sm">
+            {([
+              { id: 'form', label: 'Your details' },
+              { id: 'camera', label: 'Photo (optional)' },
+              { id: 'confirmation', label: 'Confirmation' }
+            ] as const).map((item, index) => {
+              const active = step === item.id;
+              return (
+                <li key={item.id} aria-current={active ? 'step' : undefined} className={`flex items-center gap-1.5 ${active ? 'font-semibold text-indigo-700' : 'text-slate-500'}`}>
+                  <span aria-hidden="true" className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${active ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{index + 1}</span>
+                  <span>{item.label}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+
         {/* STEP 1: FORM */}
         {step === 'form' && (
           <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-200/80">
@@ -506,6 +570,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
             )}
 
             <form onSubmit={handleFormSubmit} className="space-y-5">
+              <fieldset disabled={previewOnly} className="space-y-5">
               {/* Full Name */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">
@@ -658,16 +723,16 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                   <Megaphone className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
                   <div className="space-y-1.5">
                     <span className="font-bold text-slate-900 block text-sm">
-                      Event Photography & Marketing Notice
+                      Your event photos, your choice
                     </span>
                     <p className="text-slate-600 text-xs">
-                      By completing check-in, you register your attendance at <strong>{event.name}</strong>. Event photographers capture candid and group moments throughout the venue.
+                      Photographers may capture candid and group moments at <strong>{event.name}</strong>. You can choose whether the event team may identify you in photos and use those photos for marketing.
                     </p>
                     <p className="text-slate-600 text-xs">
-                      <strong>Marketing Usage:</strong> Event managers specifically intend to use event photography to market and promote the event across social media and public platforms. We believe in explicit, non-obligatory consent: <strong>you are not required to grant photo consent</strong> to complete your check-in. If you choose to grant consent, you may select precisely which marketing channels your photos are permitted to appear in.
+                      If you opt in, you can optionally provide a reference photo to help match you with event photos. The organizer may then email you a private gallery of photos in which you were identified.
                     </p>
-                    <p className="text-[11px] text-slate-500 italic">
-                      Check-in data and reference photos are retained for 30 days and never sold to third parties.
+                    <p className="text-slate-600 text-xs">
+                      Your choice helps the event team respect your photo preferences. Photo consent is optional and is not required to check in.
                     </p>
                   </div>
                 </div>
@@ -696,11 +761,11 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                   />
                   <div className="text-xs leading-relaxed">
                     <span className="font-semibold text-slate-900 block mb-0.5">
-                      I consent to photo identification, tagging, and marketing usage{' '}
+                      I agree to photo identification and marketing use{' '}
                       <span className="text-slate-400 font-normal">(Optional)</span>
                     </span>
                     <span className="text-slate-600">
-                      I authorize <strong>{event.name}</strong> and its event managers to identify and tag me in event photos, and to utilize photos in which I appear for marketing and promotional campaigns across my selected channels below.
+                      I agree that the event team may identify and tag me in photos and use photos of me for marketing on the channels I select below. I can optionally provide a reference photo for matching and a private gallery.
                     </span>
                   </div>
                 </label>
@@ -765,7 +830,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                   <div className="p-3 rounded-xl bg-slate-100/70 border border-slate-200/80 text-[11px] text-slate-500 flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 text-slate-400 flex-shrink-0" />
                     <span>
-                      Photo marketing consent is not selected. Your photos will <strong>not</strong> be published to marketing channels or tagged.
+                      You can check in without photo identification or marketing consent.
                     </span>
                   </div>
                 )}
@@ -774,7 +839,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || previewOnly}
                 className="w-full mt-6 py-3.5 px-6 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-medium rounded-xl text-sm shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
               >
                 {submitting ? (
@@ -789,6 +854,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                   </>
                 )}
               </button>
+              </fieldset>
             </form>
           </div>
         )}
@@ -801,11 +867,12 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                 <Camera className="w-6 h-6" />
               </div>
               <h2 className="text-xl font-bold text-slate-900">
-                Check-in reference photo for event identification (optional)
+                Add a reference photo (optional)
               </h2>
               <p className="text-xs text-slate-500 mt-2">
-                This optional photo allows photographers and facial identification to tag you in event photos. All images will be purged within 30 days of the event.
+                A reference photo helps match you with event photos. If the organizer releases a gallery, they can email you the photos in which you were identified. You can also skip this step.
               </p>
+              <p className="text-xs text-slate-600 mt-3">Face the camera, center your head in the outline, and find soft, even light.</p>
             </div>
 
             {cameraError && (
@@ -847,6 +914,12 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                     : 'opacity-0 pointer-events-none'
                 }`}
               />
+
+              {cameraActive && videoLoaded && !capturedPhotoDataUrl && (
+                <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                  <div className="h-[72%] w-[54%] rounded-[50%] border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(15,23,42,0.5)]" />
+                </div>
+              )}
 
               {/* Snapshot Preview */}
               {capturedPhotoDataUrl && (
@@ -899,6 +972,16 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
               {/* Hidden Canvas for capture */}
               <canvas ref={canvasRef} className="hidden" />
             </div>
+
+            {capturedPhotoDataUrl && qualityTips.length > 0 && (
+              <div role="status" className="mt-4 mx-auto max-w-sm rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <p className="font-semibold">A few tips for a clearer photo</p>
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  {qualityTips.map((tip) => <li key={tip}>{tip}</li>)}
+                </ul>
+                <p className="mt-2">You can retake the photo or continue with this one.</p>
+              </div>
+            )}
 
             {/* Controls */}
             <div className="mt-6 flex flex-col gap-3 max-w-sm mx-auto">
@@ -1057,7 +1140,7 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                   </div>
                 ) : (
                   <p className="text-[11px] text-slate-500 mt-1 italic">
-                    Your photos will not be utilized in promotional marketing materials or public tagging.
+                    You did not give consent for identification or marketing use.
                   </p>
                 )}
               </div>
@@ -1113,12 +1196,12 @@ export const AttendeeCheckInPage: React.FC<AttendeeCheckInPageProps> = ({ eventI
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              {onBackToApp && (
+              {previewOnly && onBackToApp && (
                 <button
                   onClick={onBackToApp}
                   className="w-full py-2.5 text-xs text-slate-500 hover:text-slate-900 transition cursor-pointer"
                 >
-                  Return to Management Hub
+                  Return to event
                 </button>
               )}
             </div>

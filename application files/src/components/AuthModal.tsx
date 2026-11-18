@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
-import { LogIn, Sparkles, Mail, Lock, User, Check, X, Shield, Camera, ShieldAlert } from 'lucide-react';
+import { Mail, Lock, User, X } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -9,8 +9,27 @@ interface AuthModalProps {
   defaultRole?: UserRole;
 }
 
+function googleSignInError(error: unknown): string {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+  const messages: Record<string, string> = {
+    'auth/unauthorized-domain': 'This website address is not authorized for sign-in. Contact the app administrator.',
+    'auth/operation-not-allowed': 'Google sign-in is not enabled for this app. Contact the app administrator.',
+    'auth/popup-blocked': 'Your browser blocked the sign-in window. Allow popups for this site and try again.',
+    'auth/popup-closed-by-user': 'The sign-in window closed before sign-in finished. Try again and allow popups for this site.',
+    'auth/cancelled-popup-request': 'Another sign-in attempt was started. Close extra sign-in windows and try again.',
+    'auth/network-request-failed': 'Could not connect to Google. Check your connection and try again.',
+    'auth/web-storage-unsupported': 'Your browser is blocking storage needed for sign-in. Try a regular browser window.',
+    'auth/account-exists-with-different-credential': 'This email is already associated with another sign-in method. Use that method or contact the app administrator.'
+  };
+  const safeCode = typeof code === 'string' && /^auth\/[a-z0-9-]{1,80}$/.test(code) ? code : null;
+  const message = safeCode && messages[safeCode] ? messages[safeCode] : 'Google sign-in failed. Please try again or contact the app administrator.';
+  return safeCode ? `${message} (${safeCode})` : message;
+}
+
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRole = 'event_manager' }) => {
-  const { signInWithGoogle, signInWithDemo, signInWithEmail, signUpWithEmail, pendingInvitationToken } = useAuth();
+  const { signInWithGoogle, signInWithEmail, signUpWithEmail, pendingInvitationToken } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [role, setRole] = useState<UserRole>(defaultRole);
   const [email, setEmail] = useState('');
@@ -37,21 +56,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
       }
       onClose();
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Authentication failed. Please verify credentials.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDemo = async (demoRole: UserRole) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await signInWithDemo(demoRole);
-      onClose();
-    } catch (err: any) {
-      setError(err.message || 'Demo sign in failed.');
+      console.error('Authentication failed');
+      setError('Authentication failed. Please verify your details and try again.');
     } finally {
       setLoading(false);
     }
@@ -63,8 +69,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
     try {
       await signInWithGoogle();
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Google sign in failed.');
+    } catch (err: unknown) {
+      setError(googleSignInError(err));
     } finally {
       setLoading(false);
     }
@@ -79,7 +85,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
               L
             </div>
             <h3 className="text-base font-bold text-slate-900">
-              {mode === 'signin' ? 'Sign In to Lumina' : 'Create New Account'}
+              {mode === 'signin' ? 'Sign In to Masquerade' : 'Create New Account'}
             </h3>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-slate-700">
@@ -98,40 +104,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultRo
             Sign in using the email address that received this photographer invitation.
           </div>
         )}
-
-        {/* Quick Demo Logins for Fast Evaluation */}
-        {!pendingInvitationToken && <div className="mb-5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-            Quick Demo Login (One-Click)
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            <button
-              onClick={() => handleDemo('super_admin')}
-              disabled={loading}
-              className="py-2 px-2 bg-white hover:bg-violet-50 border border-slate-200 text-slate-800 text-[11px] font-semibold rounded-xl transition flex flex-col items-center justify-center gap-1 shadow-xs cursor-pointer"
-            >
-              <ShieldAlert className="w-4 h-4 text-violet-600" />
-              <span>Super Admin</span>
-            </button>
-            <button
-              onClick={() => handleDemo('event_manager')}
-              disabled={loading}
-              className="py-2 px-2 bg-white hover:bg-indigo-50 border border-slate-200 text-slate-800 text-[11px] font-semibold rounded-xl transition flex flex-col items-center justify-center gap-1 shadow-xs cursor-pointer"
-            >
-              <Shield className="w-4 h-4 text-indigo-600" />
-              <span>Manager</span>
-            </button>
-            <button
-              onClick={() => handleDemo('photographer')}
-              disabled={loading}
-              className="py-2 px-2 bg-white hover:bg-purple-50 border border-slate-200 text-slate-800 text-[11px] font-semibold rounded-xl transition flex flex-col items-center justify-center gap-1 shadow-xs cursor-pointer"
-            >
-              <Camera className="w-4 h-4 text-purple-600" />
-              <span>Photographer</span>
-            </button>
-          </div>
-        </div>}
 
         {/* Google SSO */}
         <button

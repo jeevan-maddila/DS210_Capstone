@@ -1,6 +1,6 @@
 # Cloud Run Job 1: Check-In Photo Embedder (AuraFace-v1)
 
-A containerized batch processing job designed for **Google Cloud Run** to process attendee check-in reference photos, generate 512-dimensional facial feature embeddings using **AuraFace-v1** (Apache 2.0 license), and schedule automated `deleteOn` (+30 days) retention timestamps in Firestore.
+A containerized batch processing job designed for **Google Cloud Run** to process attendee check-in reference photos and generate 512-dimensional facial feature embeddings using **AuraFace-v1** (Apache 2.0 license). It writes an `embeddingExpiresAt` timestamp; field deletion is performed separately by the [biometric cleanup job](../cleanup_biometrics/README.md).
 
 ---
 
@@ -32,7 +32,7 @@ jobs/embed_checkin_photos/
 
 ## 3. Prerequisites & Setup (Actions You Must Perform)
 
-Since AI Studio cannot run `gcloud` provisioning commands against your personal Google Cloud account, run the following commands once from your terminal:
+Run the following commands once from your terminal:
 
 ### Step 1: Enable Required GCP APIs
 ```bash
@@ -142,6 +142,6 @@ python main.py --dry-run
 
 For every attendee document at `events/{eventId}/attendees/{attendeeId}`:
 - `photoEmbedding`: Array of 512 floats ($L_2$-normalized). Ready for KNN search queries by Job 2.
-- `deleteOn`: ISO 8601 string (`checkedInAt + 30 days`). Ready for the automated vector cleanup job.
+- `embeddingExpiresAt`: Firestore timestamp, initially processing time plus 30 days (configurable with `--retention-days`). Active-template reprocessing preserves the existing expiration. Expired/purged records are skipped even with `--force`; write transactions recheck retirement to avoid racing cleanup. The cleanup job removes expired biometric fields and marks the record purged. This job does not delete attendee documents or selfies.
 - `photoProcessingStatus`: `'processed'` (or `'no_face_detected'` if unaligned).
 - `processedAt`: ISO 8601 timestamp of worker execution.

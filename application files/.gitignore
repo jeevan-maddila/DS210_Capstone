@@ -1,2 +1,6 @@
 .env.local
 dist/
+server.js
+node_modules/
+.tools/
+.npm-cache/

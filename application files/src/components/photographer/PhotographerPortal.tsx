@@ -20,13 +20,15 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { eventService } from '../../services/eventService';
-import { EventItem, PhotoRecord, PhotoStatus } from '../../types';
+import { photoHash, PhotoUploadError } from '../../lib/photoUpload';
+import { EventItem, PhotoRecord } from '../../types';
 
 interface FileUploadQueueItem {
   id: string;
   file: File;
   progress: number;
-  status: 'uploading' | 'completed' | 'error';
+  status: 'uploading' | 'completed' | 'error' | 'duplicate';
+  stage?: string;
   errorMessage?: string;
   result?: PhotoRecord;
 }
@@ -47,6 +49,8 @@ export const PhotographerPortal: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const uploadingRef = useRef(false);
+  const [uploadingBatch, setUploadingBatch] = useState(false);
 
   // Load photographer assigned events
   const loadEvents = async () => {
@@ -59,7 +63,7 @@ export const PhotographerPortal: React.FC = () => {
         setSelectedEventId(list[0].id);
       }
     } catch (err) {
-      console.error('Failed to load photographer events:', err);
+      console.error('Failed to load photographer events:');
     } finally {
       setLoadingEvents(false);
     }
@@ -82,11 +86,12 @@ export const PhotographerPortal: React.FC = () => {
 
     setLoadingPhotos(true);
     try {
-      const list = await eventService.listEventPhotos(eventId);
+      if (!user) return;
+      const list = await eventService.listPhotographerPhotos(eventId, user.uid);
       setPhotos(list);
       photosCacheRef.current.set(eventId, { photos: list, cachedAt: Date.now() });
     } catch (err) {
-      console.error('Failed to load photos:', err);
+      console.error('Failed to load photos:');
     } finally {
       setLoadingPhotos(false);
     }
@@ -104,31 +109,45 @@ export const PhotographerPortal: React.FC = () => {
 
   // Handle files selected (drag-drop or file picker)
   const handleFiles = async (files: FileList | null) => {
-    if (!files || !selectedEventId || !user) return;
-
-    const newItems: FileUploadQueueItem[] = Array.from(files).map((file) => ({
-      id: Math.random().toString(36).substring(2, 9),
-      file,
-      progress: 0,
-      status: 'uploading'
+    if (!files || !selectedEventId || !user || uploadingRef.current) return;
+    const eventId = selectedEventId;
+    uploadingRef.current = true;
+    setUploadingBatch(true);
+    const newItems: FileUploadQueueItem[] = Array.from(files).map(file => ({
+      id: crypto.randomUUID(), file, progress: 0, status: 'uploading', stage: 'Queued'
     }));
-
-    setUploadQueue((prev) => [...newItems, ...prev]);
-
-    // Process uploads sequentially to prevent browser UI freeze and memory exhaustion
-    const completedPhotos: PhotoRecord[] = [];
-    for (const item of newItems) {
-      const rec = await uploadFileItem(item, selectedEventId);
-      if (rec) {
-        completedPhotos.push(rec);
+    setUploadQueue(previous => [...newItems, ...previous]);
+    let completed = 0;
+    let duplicates = 0;
+    try {
+      const existing = await eventService.listPhotographerPhotos(eventId, user.uid);
+      const hashes = new Set(existing.map(photo => photo.sourceHash).filter(Boolean));
+      for (const item of newItems) {
+        try {
+          setUploadQueue(previous => previous.map(q => q.id === item.id ? { ...q, stage: 'Checking file…' } : q));
+          const hash = await photoHash(item.file);
+          if (hashes.has(hash)) {
+            duplicates++;
+            setUploadQueue(previous => previous.map(q => q.id === item.id ? { ...q, status: 'duplicate', stage: 'Already uploaded — skipped' } : q));
+            continue;
+          }
+          const photo = await uploadFileItem(item, eventId);
+          if (photo) { hashes.add(hash); completed++; }
+        } catch (error) {
+          const message = error instanceof PhotoUploadError ? error.message : 'Could not read this photo. Please retry.';
+          setUploadQueue(previous => previous.map(q => q.id === item.id ? { ...q, status: 'error', errorMessage: message } : q));
+        }
       }
-    }
-
-    if (completedPhotos.length > 0) {
-      setStatusMessage(
-        `✓ Upload complete: ${completedPhotos.length} photo(s) securely stored in Cloud Storage. Photos are quarantined pending background Cloud Run privacy redaction.`
-      );
-      await loadEventPhotos(selectedEventId);
+      setStatusMessage(completed + ' uploaded; ' + duplicates + ' exact duplicate(s) skipped. Originals are shown below.');
+      photosCacheRef.current.delete(eventId);
+      await loadEventPhotos(eventId, true);
+    } catch {
+      setUploadQueue(previous => previous.map(q => newItems.some(item => item.id === q.id)
+        ? { ...q, status: 'error', errorMessage: 'Could not verify your existing uploads. Check your connection and event access.' } : q));
+    } finally {
+      uploadingRef.current = false;
+      setUploadingBatch(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -144,7 +163,8 @@ export const PhotographerPortal: React.FC = () => {
           setUploadQueue((prev) =>
             prev.map((q) => (q.id === item.id ? { ...q, progress } : q))
           );
-        }
+        },
+        stage => setUploadQueue(previous => previous.map(q => q.id === item.id ? { ...q, stage } : q))
       );
 
       setUploadQueue((prev) =>
@@ -155,9 +175,9 @@ export const PhotographerPortal: React.FC = () => {
       setPhotos((prev) => [photoRecord, ...prev.filter((p) => p.id !== photoRecord.id)]);
       return photoRecord;
     } catch (err: any) {
-      console.error('Upload failed for file:', item.file.name, err);
+      console.error('Photo upload failed');
       setUploadQueue((prev) =>
-        prev.map((q) => (q.id === item.id ? { ...q, status: 'error', errorMessage: err.message || 'Upload failed' } : q))
+        prev.map((q) => (q.id === item.id ? { ...q, status: 'error', errorMessage: err instanceof PhotoUploadError ? err.message : err?.code === 'storage/unauthorized' ? 'Upload denied. Contact the event manager to check Storage permissions.' : 'Upload failed. Check your connection and try again.' } : q))
       );
       return null;
     }
@@ -176,15 +196,11 @@ export const PhotographerPortal: React.FC = () => {
         [deleteConfirmPhoto.storagePath, deleteConfirmPhoto.clearedStoragePath, deleteConfirmPhoto.rawStoragePath]
       );
       setPhotos((prev) => prev.filter((p) => p.id !== deleteConfirmPhoto.id));
+      photosCacheRef.current.delete(selectedEventId);
       setDeleteConfirmPhoto(null);
     } catch (err: any) {
-      console.error('Delete error:', err);
-      let msg = err.message || 'Could not delete photo';
-      try {
-        const parsed = JSON.parse(err.message);
-        if (parsed.error) msg = parsed.error;
-      } catch (e) {}
-      setDeletePhotoError(msg);
+      console.error('Delete error:');
+      setDeletePhotoError('Could not delete the photo. Please try again.');
     } finally {
       setDeletingPhotoId(null);
     }
@@ -206,29 +222,6 @@ export const PhotographerPortal: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: PhotoStatus) => {
-    switch (status) {
-      case 'processed':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="w-3 h-3" /> Processed
-          </span>
-        );
-      case 'flagged':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200">
-            <AlertTriangle className="w-3 h-3" /> Flagged
-          </span>
-        );
-      case 'pending':
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-            <Clock className="w-3 h-3" /> Pending
-          </span>
-        );
-    }
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
@@ -290,6 +283,7 @@ export const PhotographerPortal: React.FC = () => {
                 return (
                   <button
                     key={evt.id}
+                    disabled={uploadingBatch}
                     onClick={() => setSelectedEventId(evt.id)}
                     className={`px-4 py-2 rounded-xl text-xs font-medium whitespace-nowrap transition cursor-pointer flex items-center gap-2 ${
                       isSelected
@@ -363,7 +357,7 @@ export const PhotographerPortal: React.FC = () => {
                   <div className="mb-4">
                     <h3 className="text-base font-semibold text-slate-900">Bulk Photo Uploader</h3>
                     <p className="text-xs text-slate-500">
-                      Upload high-resolution event shots. Supports multiple files simultaneously (JPEG, PNG, HEIC, RAW).
+                      Upload high-resolution event shots. JPEG, PNG, WebP, and HEIC/HEIF. HEIC is converted to high-quality JPEG on your device before upload. Export RAW files as JPEG first.
                     </p>
                   </div>
 
@@ -390,7 +384,8 @@ export const PhotographerPortal: React.FC = () => {
                       ref={fileInputRef}
                       type="file"
                       multiple
-                      accept="image/*,.raw,.cr2,.nef,.arw,.heic"
+                      accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+                      disabled={uploadingBatch}
                       className="hidden"
                       onChange={(e) => handleFiles(e.target.files)}
                     />
@@ -401,7 +396,7 @@ export const PhotographerPortal: React.FC = () => {
                       Drag & drop photos here, or <span className="text-indigo-600 underline">browse files</span>
                     </div>
                     <p className="text-xs text-slate-400 mt-1">
-                      Select multiple photos to upload in batch. Per-file progress tracks in real-time.
+                      Up to 30 MB per file. Exact duplicates of your previous uploads are skipped when a fingerprint is available.
                     </p>
                   </div>
 
@@ -434,6 +429,7 @@ export const PhotographerPortal: React.FC = () => {
                                 <span className="text-slate-500 ml-2">{formatFileSize(item.file.size)}</span>
                               </div>
 
+                              {item.status === 'error' && <p className="text-rose-700 mt-1">{item.errorMessage}</p>}
                               {/* Progress bar */}
                               <div className="w-full h-1.5 bg-slate-200 rounded-full mt-1.5 overflow-hidden">
                                 <div
@@ -451,8 +447,9 @@ export const PhotographerPortal: React.FC = () => {
 
                             <div className="flex-shrink-0">
                               {item.status === 'uploading' && (
-                                <span className="text-[11px] text-indigo-600 font-semibold">{item.progress}%</span>
+                                <span className="text-[11px] text-indigo-600 font-semibold">{item.stage || (item.progress + '%')}</span>
                               )}
+                              {item.status === 'duplicate' && <span className="text-xs text-slate-600">Duplicate skipped</span>}
                               {item.status === 'completed' && (
                                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                               )}
@@ -475,7 +472,7 @@ export const PhotographerPortal: React.FC = () => {
                     <div>
                       <h3 className="text-base font-semibold text-slate-900">Event Gallery</h3>
                       <p className="text-xs text-slate-500">
-                        Photos uploaded to this event, sorted most recent first. You can delete your own uploads.
+                        Your original uploads for this event, most recent first. Open an image to inspect it at full size.
                       </p>
                     </div>
                     <span className="text-xs text-slate-500 font-medium">
@@ -497,7 +494,7 @@ export const PhotographerPortal: React.FC = () => {
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                       {photos.map((photo) => {
-                        const isOwnUpload = photo.uploadedBy === user?.uid || photo.uploadedByEmail === user?.email;
+                        const isOwnUpload = photo.uploadedBy === user?.uid;
                         return (
                           <div
                             key={photo.id}
@@ -505,22 +502,12 @@ export const PhotographerPortal: React.FC = () => {
                           >
                             {/* Thumbnail */}
                             <div className="relative aspect-video bg-slate-900 overflow-hidden">
-                              <img
-                                src={photo.clearedDownloadUrl || photo.downloadUrl}
+                              <a href={photo.downloadUrl} target="_blank" rel="noreferrer" aria-label={"Open original " + photo.fileName}><img
+                                src={photo.downloadUrl}
                                 alt={photo.fileName}
                                 loading="lazy"
-                                className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
-                              />
-
-                              {/* Status badge overlay */}
-                              <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                                {getStatusBadge(photo.status)}
-                                {photo.hasBlurredFaces && (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-black/70 text-amber-300 border border-amber-400/40">
-                                    🛡️ {photo.blurredFaceCount || 1} Blurred
-                                  </span>
-                                )}
-                              </div>
+                              className="w-full h-full object-contain"
+                              /></a>
 
                               {/* Delete button (Photographer can delete own upload) */}
                               {isOwnUpload && (
@@ -546,24 +533,10 @@ export const PhotographerPortal: React.FC = () => {
                                 </div>
                               </div>
 
-                              {/* Tagged info if processed */}
-                              <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
-                                <span className="text-slate-500">
-                                  {photo.matchedAttendees?.length > 0
-                                    ? `✓ ${photo.matchedAttendees.length} tagged`
-                                    : photo.status === 'processed'
-                                    ? '✓ Privacy Cleared'
-                                    : 'Awaiting Task 2'}
-                                </span>
-                                {photo.allowedMarketingChannels?.length ? (
-                                  <span className="text-emerald-700 font-semibold text-[10px]">
-                                    {photo.allowedMarketingChannels.length} channel(s)
-                                  </span>
-                                ) : (
-                                  photo.fileSize && (
-                                    <span className="text-slate-400">{formatFileSize(photo.fileSize)}</span>
-                                  )
-                                )}
+                              <div className="mt-2.5 pt-2 border-t border-slate-200/60 text-[11px] text-slate-600">
+                                {formatFileSize(photo.fileSize)}
+                                {photo.originalFileName && photo.originalFileName !== photo.fileName && <span className="block">From {photo.originalFileName}</span>}
+                                {photos.filter(other => other.fileName.toLowerCase() === photo.fileName.toLowerCase()).length > 1 && <span className="block font-semibold text-amber-700">Same filename appears more than once</span>}
                               </div>
                             </div>
                           </div>

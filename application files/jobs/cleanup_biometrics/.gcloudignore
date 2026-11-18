@@ -1,0 +1,7 @@
+.gcloudignore
+__pycache__
+*.pyc
+.env*
+tests
+*service-account*.json
+*service_account*.json

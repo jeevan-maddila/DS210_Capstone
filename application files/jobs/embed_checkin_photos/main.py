@@ -184,15 +184,41 @@ def read_from_sources(bucket, *sources):
     raise RuntimeError("Unable to load photo from the document sources: " + "; ".join(errors or ["no path or URL"]))
 
 
+def biometrics_retired(data, now):
+    """A retry or --force must never revive purged or expired attendee templates."""
+    if data.get("embeddingStatus") == "purged" or data.get("biometricsPurgedAt"):
+        return True
+    expiry = data.get("embeddingExpiresAt")
+    if isinstance(expiry, str):
+        try:
+            expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        except ValueError:
+            return True
+    return isinstance(expiry, datetime) and expiry.replace(tzinfo=expiry.tzinfo or timezone.utc) <= now
+
+
 def update_existing(db, refs, changes):
-    """Atomically update existing mirrors only. Never create ghost attendee/photo docs."""
+    """Recheck retention inside the transaction so cleanup wins concurrent retries."""
     unique = {ref.path: ref for ref in refs}
     if not unique:
         raise RuntimeError("No Firestore references to update")
-    batch = db.batch()
-    for ref in unique.values():
-        batch.update(ref, changes)
-    batch.commit()
+
+    @firestore.transactional
+    def apply(transaction):
+        snapshots = [ref.get(transaction=transaction) for ref in unique.values()]
+        now = datetime.now(timezone.utc)
+        if any(not snap.exists or biometrics_retired(snap.to_dict() or {}, now) for snap in snapshots):
+            return False
+        for snapshot in snapshots:
+            payload = dict(changes)
+            expiry = (snapshot.to_dict() or {}).get("embeddingExpiresAt")
+            # Reprocessing an active template must not restart its retention clock.
+            if expiry is not None and "embeddingExpiresAt" in payload:
+                payload["embeddingExpiresAt"] = expiry
+            transaction.update(snapshot.reference, payload)
+        return True
+
+    return apply(db.transaction())
 
 
 def blur_face(image, bbox):
@@ -296,9 +322,11 @@ def collect_attendees(db, event_id, attendee_id, limit, force=False, scan_limit=
         if not doc.exists:
             continue
         data = doc.to_dict() or {}
+        if biometrics_retired(data, now):
+            continue
         eid = data.get("eventId")
         if not eid or (event_id and eid != event_id):
-            LOG.warning("Skipping root attendee %s: missing/conflicting eventId", doc.id)
+            LOG.warning("Skipping attendee: missing or conflicting event ID")
             continue
         sources = [v for v in (data.get("checkInPhotoPath"), data.get("checkInPhotoUrl")) if v]
         if not sources:
@@ -356,7 +384,6 @@ def main():
     engine = FaceEngine(det_size=640)
     errors = 0
     for row in attendees:
-        name = f"{row['event_id']}/{row['attendee_id']}"
         try:
             image = read_from_sources(bucket, *row["photos"])
             faces = engine.detect(image)
@@ -378,21 +405,23 @@ def main():
                 "deleteOn": firestore.DELETE_FIELD,
             }
             if not args.dry_run:
-                update_existing(db, row["docs"], payload)
-            LOG.info("%s: embedded 512-D face%s", name, " [dry run]" if args.dry_run else "")
+                if not update_existing(db, row["docs"], payload):
+                    LOG.info("Skipped an attendee retired or removed during processing")
+                    continue
+            LOG.info("Attendee embedding completed%s", " [dry run]" if args.dry_run else "")
         except Exception as exc:
             errors += 1
-            LOG.error("%s: %s", name, exc)
+            LOG.error("Attendee embedding failed: %s", type(exc).__name__)
             if not args.dry_run:
                 try:
                     update_existing(db, row["docs"], {
-                        "embeddingStatus": "needs_review", "embeddingError": str(exc)[:500],
+                        "embeddingStatus": "needs_review", "embeddingError": "Photo processing failed; review required.",
                         "photoEmbedding": firestore.DELETE_FIELD,
                         "embeddingModel": firestore.DELETE_FIELD,
                         "embeddingPhotoFingerprint": firestore.DELETE_FIELD,
                     })
                 except Exception:
-                    LOG.exception("Failed to save embedding error for %s", name)
+                    LOG.error("Failed to save attendee embedding error status")
     LOG.info("Task 1 done: attempted=%d, failed=%d", len(attendees), errors)
     if errors:
         sys.exit(1)

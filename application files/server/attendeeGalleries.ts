@@ -162,7 +162,7 @@ async function sendBatch(config: GalleryConfig, eventName: string, candidates: D
     html: `
       <div style="background:#f8fafc;padding:32px 16px;font-family:Arial,sans-serif;color:#0f172a">
         <div style="max-width:560px;margin:auto;background:white;border:1px solid #e2e8f0;border-radius:18px;padding:32px">
-          <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:#4f46e5;text-transform:uppercase">Lumina Hub</div>
+          <div style="font-size:12px;font-weight:700;letter-spacing:.08em;color:#4f46e5;text-transform:uppercase">Masquerade</div>
           <h1 style="font-size:24px;line-height:1.25;margin:12px 0">Your event photos are ready</h1>
           <p style="font-size:15px;line-height:1.6;color:#475569">
             We found ${candidate.photoCount} ${candidate.photoCount === 1 ? 'photo' : 'photos'} of you from
@@ -267,7 +267,7 @@ async function loadGalleryPhotos(config: GalleryConfig, gallery: GalleryRecord) 
 function sendGalleryError(res: Response, error: unknown) {
   const message = error instanceof UserFacingError ? error.message : 'The gallery could not be loaded.';
   const status = error instanceof UserFacingError ? 404 : 500;
-  if (!(error instanceof UserFacingError)) console.error('Attendee gallery error:', error);
+  if (!(error instanceof UserFacingError)) console.error('Attendee gallery error:');
   return res.status(status).json({ error: message });
 }
 
@@ -392,11 +392,11 @@ export function registerAttendeeGalleryRoutes(app: Express, config: GalleryConfi
           await batch.commit();
           sent += chunk.length;
         } catch (error) {
-          console.error('Gallery email batch failed:', error);
+          console.error('Gallery email batch failed:');
           const batch = db.batch();
           chunk.forEach((candidate) => {
             batch.update(db.collection('attendeeGalleryDeliveries').doc(candidate.deliveryId), {
-              error: error instanceof Error ? error.message.slice(0, 500) : 'Unknown delivery error',
+              error: 'Delivery failed. Check service logs and retry.',
               status: 'failed',
               updatedAt: Timestamp.now()
             });
@@ -414,7 +414,7 @@ export function registerAttendeeGalleryRoutes(app: Express, config: GalleryConfi
         skipped
       });
     } catch (error) {
-      console.error('Could not release attendee galleries:', error);
+      console.error('Could not release attendee galleries:');
       const message = error instanceof UserFacingError ? error.message : 'Could not release attendee galleries.';
       return res.status(500).json({ error: message });
     }

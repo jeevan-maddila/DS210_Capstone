@@ -77,7 +77,7 @@ export const adminService = {
         eventName: p.eventName || eventMap.get(p.eventId) || eventMap.get(p.event_id || '') || 'Unassigned Event'
       }));
     } catch (err) {
-      console.warn('Failed to fetch all photos:', err);
+      console.warn('Failed to fetch all photos:');
       return [];
     }
   },
@@ -92,7 +92,7 @@ export const adminService = {
       });
       return users.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     } catch (err) {
-      console.warn('Failed to fetch users table:', err);
+      console.warn('Failed to fetch users table:');
       return [];
     }
   },

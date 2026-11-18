@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { UserRole } from '../types';
 import {
   Shield,
   Camera,
@@ -14,34 +13,17 @@ import {
   ShieldAlert
 } from 'lucide-react';
 import { AuthModal } from './AuthModal';
+import { ThemeToggle } from './ThemeToggle';
 
 export type ActiveSurface = 'admin' | 'manager' | 'photographer' | 'attendee';
 
-interface NavigationProps {
-  currentSurface: ActiveSurface;
-  onSurfaceChange: (surface: ActiveSurface) => void;
-  activeCheckInEventId?: string | null;
-}
+interface NavigationProps { currentSurface?: ActiveSurface; }
 
-export const Navigation: React.FC<NavigationProps> = ({
-  currentSurface,
-  onSurfaceChange,
-  activeCheckInEventId
-}) => {
-  const { user, profile, role, isSuperAdmin, isDemoMode, updateRole, logOut } = useAuth();
+export const Navigation: React.FC<NavigationProps> = ({ currentSurface }) => {
+  const { user, profile, role, isSuperAdmin, logOut } = useAuth();
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
-  const handleSelectRole = async (targetRole: UserRole) => {
-    await updateRole(targetRole);
-    if (targetRole === 'super_admin') {
-      onSurfaceChange('admin');
-    } else if (targetRole === 'event_manager') {
-      onSurfaceChange('manager');
-    } else {
-      onSurfaceChange('photographer');
-    }
-  };
 
   return (
     <>
@@ -55,7 +37,7 @@ export const Navigation: React.FC<NavigationProps> = ({
               </div>
               <div className="flex flex-col">
                 <span className="font-bold text-sm tracking-tight text-white flex items-center gap-2">
-                  Lumina Hub
+                  Masquerade
                   <span className="text-[10px] font-mono font-medium px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
                     Firebase
                   </span>
@@ -66,68 +48,13 @@ export const Navigation: React.FC<NavigationProps> = ({
               </div>
             </div>
 
-            {/* Surface Switcher Tabs */}
-            <div className="flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/80 text-xs">
-              {/* Super Admin Tab */}
-              <button
-                onClick={() => onSurfaceChange('admin')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  currentSurface === 'admin'
-                    ? 'bg-violet-600 text-white shadow-xs'
-                    : 'text-violet-300 hover:text-white hover:bg-slate-700/50'
-                }`}
-                title="Super Admin Platform Overview & Cross-Manager Governance"
-              >
-                <ShieldAlert className="w-3.5 h-3.5 text-violet-400" />
-                <span className="hidden sm:inline">Super Admin</span>
-                <span className="sm:hidden">Admin</span>
-              </button>
-
-              {/* Manager Portal Tab */}
-              <button
-                onClick={() => onSurfaceChange('manager')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  currentSurface === 'manager'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                }`}
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Manager Portal</span>
-                <span className="sm:hidden">Manager</span>
-              </button>
-
-              {/* Photographer Portal Tab */}
-              <button
-                onClick={() => onSurfaceChange('photographer')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  currentSurface === 'photographer'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                }`}
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Photographer Portal</span>
-                <span className="sm:hidden">Photographer</span>
-              </button>
-
-              {/* Attendee Check-In Tab */}
-              <button
-                onClick={() => onSurfaceChange('attendee')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  currentSurface === 'attendee'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-                }`}
-              >
-                <UserCheck className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Attendee Check-In</span>
-                <span className="sm:hidden">Check-In</span>
-              </button>
-            </div>
+            {user && <div className="text-sm font-semibold text-slate-200 hidden sm:block">
+              {isSuperAdmin ? 'Superuser' : role === 'photographer' ? 'Photographer' : 'Event manager'}
+            </div>}
 
             {/* Auth / Profile Area */}
             <div className="flex items-center gap-2">
+              <ThemeToggle />
               {user ? (
                 <div className="relative">
                   <button
@@ -165,57 +92,6 @@ export const Navigation: React.FC<NavigationProps> = ({
                         </div>
                         <div className="text-[11px] text-slate-400 truncate">{user.email}</div>
                       </div>
-
-                      {/* Demo Role Switcher Section */}
-                      {isDemoMode && <div className="py-1 border-b border-slate-700/80 mb-1">
-                        <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-3 py-1">
-                          Switch Role (Demo Mode)
-                        </div>
-                        <button
-                          onClick={() => handleSelectRole('super_admin')}
-                          className={`w-full text-left px-3 py-1.5 rounded-lg transition flex items-center justify-between cursor-pointer ${
-                            role === 'super_admin'
-                              ? 'bg-violet-600/30 text-violet-200 font-semibold'
-                              : 'text-slate-300 hover:bg-slate-700/70'
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <ShieldAlert className="w-3 h-3 text-violet-400" />
-                            Super Admin
-                          </span>
-                          {role === 'super_admin' && <span className="text-[10px]">✓</span>}
-                        </button>
-
-                        <button
-                          onClick={() => handleSelectRole('event_manager')}
-                          className={`w-full text-left px-3 py-1.5 rounded-lg transition flex items-center justify-between cursor-pointer ${
-                            role === 'event_manager'
-                              ? 'bg-indigo-600/30 text-indigo-200 font-semibold'
-                              : 'text-slate-300 hover:bg-slate-700/70'
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <Shield className="w-3 h-3 text-indigo-400" />
-                            Event Manager
-                          </span>
-                          {role === 'event_manager' && <span className="text-[10px]">✓</span>}
-                        </button>
-
-                        <button
-                          onClick={() => handleSelectRole('photographer')}
-                          className={`w-full text-left px-3 py-1.5 rounded-lg transition flex items-center justify-between cursor-pointer ${
-                            role === 'photographer'
-                              ? 'bg-indigo-600/30 text-indigo-200 font-semibold'
-                              : 'text-slate-300 hover:bg-slate-700/70'
-                          }`}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <Camera className="w-3 h-3 text-indigo-400" />
-                            Photographer
-                          </span>
-                          {role === 'photographer' && <span className="text-[10px]">✓</span>}
-                        </button>
-                      </div>}
 
                       <button
                         onClick={() => logOut()}

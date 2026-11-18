@@ -1,1 +1,73 @@
 @import "tailwindcss";
+
+/* Theme mappings for existing utility-based surfaces. */
+html.dark body { background: #0f172a; color: #e2e8f0; }
+html.dark :is([class~="bg-white"], [class*="bg-white/"]) { background-color: #1e293b; }
+html.dark :is([class~="bg-slate-50"], [class*="bg-slate-50/"], [class~="bg-slate-100"], [class*="bg-slate-100/"]) { background-color: #172337; }
+html.dark :is([class*="bg-indigo-50"], [class*="bg-violet-50"], [class*="bg-purple-50"]) { background-color: #292b50; }
+html.dark :is([class*="bg-amber-50"], [class*="bg-orange-50"]) { background-color: #493721; }
+html.dark :is([class*="bg-rose-50"], [class*="bg-red-50"]) { background-color: #4b2631; }
+html.dark :is([class*="bg-emerald-50"], [class*="bg-green-50"]) { background-color: #173e36; }
+html.dark [class*="from-slate-100"] { background-image: none; background-color: #0f172a; }
+html.dark :is([class~="text-slate-900"], [class~="text-slate-800"], [class~="text-slate-700"], [class~="text-slate-600"], [class~="text-slate-500"]) { color: #cbd5e1; }
+html.dark :is([class~="text-slate-900"], [class~="text-slate-800"]) { color: #f1f5f9; }
+html.dark :is([class~="text-indigo-950"], [class~="text-indigo-900"], [class~="text-indigo-800"], [class~="text-indigo-700"], [class~="text-indigo-600"], [class~="text-violet-700"]) { color: #c7d2fe; }
+html.dark :is([class~="text-purple-900"], [class~="text-purple-800"], [class~="text-purple-700"], [class~="text-purple-600"], [class~="text-violet-800"], [class~="text-violet-600"]) { color: #ddd6fe; }
+html.dark :is([class~="text-blue-900"], [class~="text-blue-800"], [class~="text-blue-700"], [class~="text-blue-600"]) { color: #bfdbfe; }
+html.dark :is([class*="bg-blue-50"], [class*="bg-blue-100"]) { background-color: #1e3a5f; }
+html.dark :is([class~="text-amber-950"], [class~="text-amber-900"], [class~="text-amber-800"], [class~="text-amber-700"], [class~="text-amber-600"]) { color: #fde68a; }
+html.dark :is([class~="text-rose-900"], [class~="text-rose-800"], [class~="text-rose-700"], [class~="text-rose-600"], [class~="text-red-700"]) { color: #fecdd3; }
+html.dark :is([class~="text-emerald-900"], [class~="text-emerald-800"], [class~="text-emerald-700"], [class~="text-emerald-600"]) { color: #a7f3d0; }
+html.dark :is([class*="border-slate-100"], [class*="border-slate-200"], [class*="border-slate-300"]) { border-color: #475569; }
+html.dark :is(input, textarea, select) { color-scheme: dark; }
+html.dark :is(input, textarea)::placeholder { color: #94a3b8; }
+
+/* Appearance settings are in the navigation, or above public pages. */
+.appearance-settings { position: relative; z-index: 70; font-size: .875rem; }
+.public-settings-bar { display: flex; justify-content: flex-end; padding: .6rem 1rem; background: #0f172a; }
+.settings-trigger, .settings-close { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border: 1px solid #64748b; border-radius: .65rem; background: #1e293b; color: #fff; cursor: pointer; }
+.settings-trigger { min-height: 2.5rem; padding: .45rem .65rem; font-size: .75rem; font-weight: 600; }
+.settings-close { border: 0; background: transparent; color: inherit; min-width: 2rem; min-height: 2rem; }
+.settings-trigger:hover, .settings-close:hover { background: #334155; }
+.settings-panel { position: absolute; top: calc(100% + .5rem); right: 0; width: min(20rem, calc(100vw - 2rem)); padding: 1rem; border: 1px solid #94a3b8; border-radius: .9rem; color: #0f172a; background: #fff; box-shadow: 0 12px 32px #0f172a40; }
+.settings-panel-heading { display: flex; align-items: center; justify-content: space-between; font-weight: 700; }
+.settings-option { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 0; border-bottom: 1px solid #cbd5e1; cursor: pointer; }
+.settings-option span { display: flex; flex-direction: column; gap: .15rem; }
+.settings-option small, .settings-note { color: #475569; font-size: .75rem; }
+.settings-option input { width: 1.25rem; height: 1.25rem; flex: none; accent-color: #4338ca; }
+.settings-note { margin-top: .75rem; }
+.settings-close:hover { color: #fff; }
+html.dark .settings-panel { color: #f8fafc; background: #1e293b; border-color: #94a3b8; }
+html.dark .settings-option { border-color: #64748b; }
+html.dark .settings-option small, html.dark .settings-note { color: #cbd5e1; }
+.settings-trigger:focus-visible, .settings-close:focus-visible, .settings-option input:focus-visible { outline: 3px solid #818cf8; outline-offset: 3px; }
+@media (max-width: 640px) { .settings-trigger-label { display: none; } }
+
+/* Optional stronger contrast, while preserving status colors and labels. */
+html.high-contrast:not(.dark) :is([class~="bg-white"], [class~="bg-slate-50"], [class~="bg-slate-100"]) > :is([class~="text-slate-400"], [class~="text-slate-500"], [class~="text-slate-600"]) { color: #334155; }
+html.high-contrast.dark :is([class~="text-slate-400"], [class~="text-slate-500"], [class~="text-slate-600"]) { color: #f1f5f9; }
+html.high-contrast :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { border: 2px solid #334155; }
+html.high-contrast.dark :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { border-color: #e2e8f0; }
+html.high-contrast :is(a, button, input, select, textarea):focus-visible { outline: 3px solid #4338ca; outline-offset: 3px; }
+html.high-contrast.dark :is(a, button, input, select, textarea):focus-visible { outline-color: #facc15; }
+html.high-contrast a { text-decoration: underline; text-underline-offset: .15em; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+/* Semantic role badges keep text and background colors paired in both themes. */
+.role-badge { display: inline-flex; align-items: center; border: 1px solid; border-radius: 9999px; padding: .15rem .5rem; font-size: .7rem; line-height: 1.4; font-weight: 700; }
+.role-badge-super_admin { color: #5b21b6; background: #ede9fe; border-color: #c4b5fd; }
+.role-badge-event_manager { color: #3730a3; background: #e0e7ff; border-color: #a5b4fc; }
+.role-badge-photographer { color: #065f46; background: #d1fae5; border-color: #6ee7b7; }
+.role-badge-unassigned { color: #334155; background: #f1f5f9; border-color: #94a3b8; }
+html.dark .role-badge-super_admin { color: #ede9fe; background: #3b2164; border-color: #a78bfa; }
+html.dark .role-badge-event_manager { color: #e0e7ff; background: #242e65; border-color: #a5b4fc; }
+html.dark .role-badge-photographer { color: #d1fae5; background: #123f33; border-color: #6ee7b7; }
+html.dark .role-badge-unassigned { color: #f1f5f9; background: #334155; border-color: #94a3b8; }
+html.high-contrast .role-badge { border-width: 2px; }
+/* Older badges elsewhere still use utility colors; map their pale backgrounds too. */
+html.dark :is([class~="bg-indigo-100"], [class~="bg-violet-100"], [class~="bg-purple-100"]) { background-color: #292b50; }
+html.dark :is([class~="bg-emerald-100"], [class~="bg-green-100"]) { background-color: #173e36; }
+html.dark :is([class~="bg-amber-100"], [class~="bg-orange-100"]) { background-color: #493721; }
+html.dark :is([class~="bg-rose-100"], [class~="bg-red-100"]) { background-color: #4b2631; }

@@ -12,6 +12,29 @@ A containerized batch processing job on **Google Cloud Run** that processes high
 
 ---
 
+## Thumbnail focal point
+
+Successful processing now writes `thumbnailFocus` to the same photo documents as
+the cleared output: normalized `x`/`y` coordinates plus `imageWidth` and
+`imageHeight`. The point is the center of the union of the existing detected face
+bounds. It uses the job's existing detections; it adds no model call or identity
+matching step and does not store face boxes. The cleared JPEG keeps the decoded
+image dimensions. Failed processing removes stale focal metadata.
+
+The manager grid uses a 16:9 `object-fit: cover` box. Its helper converts the point
+and dimensions into CSS positioning that centers the point along cropped axes,
+clamping at image edges to avoid blank space. Axes with no overflow cannot pan;
+a wide face group may still not fit. Older photos without complete metadata stay
+centered. Photographer thumbnails continue showing uncropped originals.
+
+Deploy the web application and rebuild/redeploy **match-photos** for this change.
+The Dockerfile caches the existing AuraFace weights at build time. No cloud build
+was run during local verification. Existing processed photos receive metadata only
+when reprocessed; use the job's documented event/photo scoping and `--force` only
+for the records you intend to reprocess. No bulk backfill is automatic.
+
+Focused test: `python -B -m unittest discover -s tests -v` from this directory.
+
 ## 1. Directory Structure
 
 ```

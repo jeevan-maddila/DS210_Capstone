@@ -137,7 +137,7 @@ async function sendInvitationEmail(
 
   const responseBody = (await response.json().catch(() => ({}))) as { id?: string; message?: string };
   if (!response.ok) {
-    console.error('Resend invitation delivery failed:', response.status, responseBody.message || 'Unknown error');
+    console.error('Resend invitation delivery failed; HTTP status:', response.status);
     throw new UserFacingError(
       'The invitation email could not be sent. Check the sender configuration and try again.'
     );
@@ -250,7 +250,7 @@ export function registerInvitationRoutes(app: Express, config: InvitationConfig)
         }
       });
     } catch (error) {
-      console.error('Could not create photographer invitation:', error);
+      console.error('Could not create photographer invitation:');
       const message =
         error instanceof UserFacingError ? error.message : 'Could not send the invitation. Please try again.';
       return res.status(500).json({ error: message });
@@ -304,6 +304,9 @@ export function registerInvitationRoutes(app: Express, config: InvitationConfig)
         const userRef = db.collection('users').doc(user.uid);
         const eventSnapshot = await transaction.get(eventRef);
         const userSnapshot = await transaction.get(userRef);
+        if (userSnapshot.data()?.accountState === 'deleting') {
+          throw new UserFacingError('This account is being deleted and cannot accept invitations.');
+        }
         if (!eventSnapshot.exists) {
           throw new UserFacingError('The invited event no longer exists.');
         }
@@ -359,7 +362,7 @@ export function registerInvitationRoutes(app: Express, config: InvitationConfig)
 
       return res.json({ success: true, message: 'Invitation accepted.', ...result });
     } catch (error) {
-      console.warn('Could not accept photographer invitation:', error);
+      console.warn('Could not accept photographer invitation:');
       const message =
         error instanceof UserFacingError ? error.message : 'Could not accept the invitation. Please try again.';
       return res.status(400).json({ error: message });

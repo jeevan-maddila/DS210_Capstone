@@ -1,5 +1,5 @@
 {
-  "name": "Lumina Event Photo Hub",
+  "name": "Masquerade",
   "description": "Role-based event photo management platform for Event Managers, Photographers, and Attendee Check-In.",
   "requestFramePermissions": [
     "camera"

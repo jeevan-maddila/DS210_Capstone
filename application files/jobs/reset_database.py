@@ -100,7 +100,7 @@ def wipe_storage_buckets(project_id, bucket_name):
                 total_blobs_deleted += 1
         print(f"  • Deleted {total_blobs_deleted} file(s) from gs://{bucket_name}")
     except Exception as e:
-        print(f"  • Notice cleaning storage: {e}")
+        print("  • Storage cleanup failed; verify permissions and retry.")
 
 
 def reseed_demo_data(db):
@@ -217,7 +217,7 @@ def reseed_demo_data(db):
 
     print(f"  • Seeded fresh event: '{event_payload['name']}' (ID: {event_id})")
     print(f"  • Seeded {len(attendees)} sample check-in attendee(s)")
-    print(f"  • Seeded users and admin credentials for {SUPER_ADMIN_EMAIL}")
+    print("  • Seeded users and admin records")
 
 
 def main():

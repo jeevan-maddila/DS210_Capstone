@@ -21,7 +21,7 @@ export const AttendeeGalleryPage: React.FC<AttendeeGalleryPageProps> = ({ token 
         if (active) setGallery(result);
       })
       .catch((requestError) => {
-        if (active) setError(requestError instanceof Error ? requestError.message : 'The gallery could not be loaded.');
+        if (active) setError('The gallery could not be loaded. Check your link or contact the event organizer.');
       })
       .finally(() => {
         if (active) setLoading(false);

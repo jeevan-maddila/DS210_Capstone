@@ -21,6 +21,7 @@ import {
   OperationType
 } from '../lib/firebase';
 import { EventItem, AttendeeRecord, PhotoRecord, CustomField, AssignedPhotographer, UserProfile } from '../types';
+import { preparePhoto, photoHash, PhotoUploadError } from '../lib/photoUpload';
 
 function sanitizePayload<T extends Record<string, any>>(obj: T): T {
   const result: any = {};
@@ -122,7 +123,7 @@ export const eventService = {
       });
       return events;
     } catch (err) {
-      console.warn('Could not list public events:', err);
+      console.warn('Could not list public events:');
       return [];
     }
   },
@@ -246,15 +247,7 @@ export const eventService = {
 
     // Update in subcollection
     const attendeeDocRef = doc(db, 'events', eventId, 'attendees', attendeeId);
-    try {
-      const updatePromise = updateDoc(attendeeDocRef, updateObj);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Update timeout')), 3500)
-      );
-      await Promise.race([updatePromise, timeoutPromise]);
-    } catch (err) {
-      console.warn('Notice: updateAttendeePhoto completed with non-blocking status:', err);
-    }
+    await updateDoc(attendeeDocRef, updateObj);
   },
 
   async listEventAttendees(eventId: string): Promise<AttendeeRecord[]> {
@@ -292,7 +285,7 @@ export const eventService = {
       snap.forEach((d) => list.push(d.data() as AttendeeRecord));
       return list.sort((a, b) => (b.checkedInAt || '').localeCompare(a.checkedInAt || ''));
     } catch (err) {
-      console.warn('Could not list all attendees:', err);
+      console.warn('Could not list all attendees:');
       return [];
     }
   },
@@ -303,25 +296,28 @@ export const eventService = {
     file: File,
     uploaderUid: string,
     uploaderEmail: string | undefined,
-    onProgress?: (pct: number) => void
+    onProgress?: (pct: number) => void,
+    onStage?: (stage: string) => void
   ): Promise<PhotoRecord> {
     const photoId = 'ph_' + Math.random().toString(36).substring(2, 12);
     const storagePath = `photographers/${eventId}/${photoId}`;
 
-    if (!file.type.startsWith('image/')) {
-      throw new Error(`${file.name} is not an image.`);
-    }
-    if (file.size > 30 * 1024 * 1024) {
-      throw new Error(`${file.name} exceeds the 30 MB processing limit.`);
-    }
+    const originalFileName = file.name;
+    const sourceHash = await photoHash(file);
+    file = await preparePhoto(file, onStage);
+    onStage?.('Uploading…');
 
     if (onProgress) onProgress(15);
 
-    // Store the exact original bytes. The face-matching job and attendee gallery
-    // both use this same private object.
+    // HEIC is converted locally for browser and OpenCV compatibility. Other
+    // supported formats preserve their bytes. Galleries use this uploaded image.
     const storageRef = ref(storage, storagePath);
     const uploadTask = uploadBytesResumable(storageRef, file, { contentType: file.type });
     const uploadResult = await new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        uploadTask.cancel();
+        reject(new PhotoUploadError('Upload timed out. Check your connection and retry.'));
+      }, 180000);
       uploadTask.on(
         'state_changed',
         (snapshot) => {
@@ -330,8 +326,8 @@ export const eventService = {
             : 0;
           if (onProgress) onProgress(15 + uploadProgress);
         },
-        reject,
-        () => resolve(uploadTask.snapshot)
+        error => { clearTimeout(timeout); reject(error); },
+        () => { clearTimeout(timeout); resolve(uploadTask.snapshot); }
       );
     });
     const downloadUrl = await getDownloadURL(uploadResult.ref);
@@ -349,6 +345,8 @@ export const eventService = {
       rawStoragePath: storagePath,
       downloadUrl,
       fileName: file.name,
+      originalFileName,
+      sourceHash,
       fileSize: file.size,
       status: 'pending',
       matchedAttendees: [],
@@ -359,17 +357,13 @@ export const eventService = {
     const cleanRecord = sanitizePayload(photoRecord);
 
     // 4. Primary Write: ROOT /photos/{photoId} collection (Company Owner Master Table)
-    try {
-      await setDoc(doc(db, 'photos', photoId), cleanRecord);
-    } catch (fsErr) {
-      console.warn('Could not write to root /photos collection, trying subcollection:', fsErr);
-    }
+    await setDoc(doc(db, 'photos', photoId), cleanRecord);
 
     // 5. Dual Write: Legacy /events/{eventId}/photos/{photoId} (Subcollection compatibility)
     try {
       await setDoc(doc(db, 'events', eventId, 'photos', photoId), cleanRecord);
     } catch (fsErr) {
-      console.warn('Subcollection dual-write notice:', fsErr);
+      console.warn('Subcollection dual-write notice:');
     }
 
     if (onProgress) onProgress(100);
@@ -386,12 +380,25 @@ export const eventService = {
       });
       return list.sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''));
     } catch (err) {
-      console.warn('Notice querying root /photos:', err);
+      console.warn('Notice querying root /photos:');
       return [];
     }
   },
 
   // Scoped Event Query: Filter by eventId
+  async listPhotographerPhotos(eventId: string, uploaderUid: string): Promise<PhotoRecord[]> {
+    const snapshots = await Promise.all([
+      getDocs(query(collection(db, 'photos'), where('eventId', '==', eventId), where('uploadedBy', '==', uploaderUid))),
+      getDocs(query(collection(db, 'events', eventId, 'photos'), where('uploadedBy', '==', uploaderUid)))
+    ]);
+    const photos = new Map<string, PhotoRecord>();
+    for (const snapshot of snapshots) for (const item of snapshot.docs) {
+      const photo = { ...item.data(), id: item.id, eventId } as PhotoRecord;
+      if (photo.uploadedBy === uploaderUid) photos.set(photo.id, photo);
+    }
+    return [...photos.values()].sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')));
+  },
+
   async listEventPhotos(eventId: string): Promise<PhotoRecord[]> {
     // 1. Primary Query: root /photos where eventId == eventId (single indexed read query)
     try {
@@ -419,7 +426,7 @@ export const eventService = {
       });
       return list.sort((a, b) => (b.uploadedAt || '').localeCompare(a.uploadedAt || ''));
     } catch (err) {
-      console.warn('Notice loading event photos:', err);
+      console.warn('Notice loading event photos:');
       return [];
     }
   },
@@ -463,27 +470,6 @@ export const eventService = {
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `events/${eventId}/photos/${photoId}`);
     }
-  },
-
-  async unblockPendingPhotos(eventId: string): Promise<number> {
-    const photos = await this.listEventPhotos(eventId);
-    const pending = photos.filter((p) => p.status === 'pending');
-    let count = 0;
-    for (const p of pending) {
-      const updateData = {
-        status: 'processed',
-        clearedDownloadUrl: p.downloadUrl,
-        processedAt: new Date().toISOString()
-      };
-      try {
-        await setDoc(doc(db, 'photos', p.id), updateData, { merge: true });
-      } catch (e) {}
-      try {
-        await setDoc(doc(db, 'events', eventId, 'photos', p.id), updateData, { merge: true });
-      } catch (e) {}
-      count++;
-    }
-    return count;
   },
 
   async deletePhoto(
@@ -548,7 +534,7 @@ export const eventService = {
         await this.deletePhoto(eventId, p.id, [p.storagePath, p.clearedStoragePath, p.rawStoragePath]);
         successful++;
       } catch (e) {
-        console.warn(`Failed to delete photo ${p.id}:`, e);
+        console.warn('Failed to delete a photo.');
         failed++;
       }
       if (onProgress) {
@@ -588,7 +574,7 @@ export const eventService = {
       collectionsInitialized.push('admins');
       recordsCount += 2;
     } catch (e) {
-      console.warn('Admins seed error:', e);
+      console.warn('Admins seed error:');
     }
 
     // 2. Materialize /users collection (Master Users Table)
@@ -640,7 +626,7 @@ export const eventService = {
       collectionsInitialized.push('users');
       recordsCount += 4;
     } catch (e) {
-      console.warn('Users seed error:', e);
+      console.warn('Users seed error:');
     }
 
     // 3. Materialize /events collection (Master Events Table)
@@ -688,7 +674,7 @@ export const eventService = {
         id: event2Id,
         ownerUid: adminUid,
         ownerEmail: adminEmail,
-        name: 'Annual Lumina Founders & Investors Gala',
+        name: 'Annual Masquerade Founders & Investors Gala',
         date: '2026-11-20',
         location: 'Palace of Fine Arts, San Francisco',
         ticketTypes: ['Partner Pass', 'Guest of Honor', 'Media'],
@@ -706,7 +692,7 @@ export const eventService = {
       collectionsInitialized.push('events');
       recordsCount += 2;
     } catch (e) {
-      console.warn('Events seed error:', e);
+      console.warn('Events seed error:');
     }
 
     // 4. Materialize /photos collection (Master Photos Table with eventId/event_id)
@@ -760,7 +746,7 @@ export const eventService = {
           id: 'ph_gala_cocktail_03',
           eventId: event2Id,
           event_id: event2Id,
-          eventName: 'Annual Lumina Founders & Investors Gala',
+          eventName: 'Annual Masquerade Founders & Investors Gala',
           uploadedBy: 'photog_alex_rivera',
           uploadedByEmail: 'alex.photos@lumina.event',
           uploadedAt: new Date().toISOString(),
@@ -785,7 +771,7 @@ export const eventService = {
       collectionsInitialized.push('photos');
       recordsCount += samplePhotos.length;
     } catch (e) {
-      console.warn('Photos seed error:', e);
+      console.warn('Photos seed error:');
     }
 
     // 5. Materialize /attendees collection (Master Attendees Table with eventId/event_id)
@@ -860,7 +846,7 @@ export const eventService = {
       collectionsInitialized.push('attendees');
       recordsCount += sampleAttendees.length;
     } catch (e) {
-      console.warn('Attendees seed error:', e);
+      console.warn('Attendees seed error:');
     }
 
     return {
@@ -884,7 +870,7 @@ export const eventService = {
         deletedPhotos++;
       }
     } catch (e) {
-      console.warn('Wipe root photos notice:', e);
+      throw new Error('Could not delete all photo records. The reset may be incomplete.');
     }
 
     // 2. Delete all root /attendees
@@ -895,7 +881,7 @@ export const eventService = {
         deletedAttendees++;
       }
     } catch (e) {
-      console.warn('Wipe root attendees notice:', e);
+      throw new Error('Could not delete all attendee records. The reset may be incomplete.');
     }
 
     // 3. Delete all events and subcollections
@@ -905,18 +891,18 @@ export const eventService = {
         try {
           const subP = await getDocs(collection(db, 'events', ev.id, 'photos'));
           for (const d of subP.docs) await deleteDoc(d.ref);
-        } catch (e) {}
+        } catch (e) { throw new Error('Could not delete event photo records.'); }
 
         try {
           const subA = await getDocs(collection(db, 'events', ev.id, 'attendees'));
           for (const d of subA.docs) await deleteDoc(d.ref);
-        } catch (e) {}
+        } catch (e) { throw new Error('Could not delete event attendee records.'); }
 
         await deleteDoc(ev.ref);
         deletedEvents++;
       }
     } catch (e) {
-      console.warn('Wipe events notice:', e);
+      throw new Error('Could not delete all event records. The reset may be incomplete.');
     }
 
     return { deletedEvents, deletedPhotos, deletedAttendees };
@@ -975,7 +961,7 @@ export const eventService = {
       const newId = await this.createEvent(sampleEvent);
       return await this.getEvent(newId);
     } catch (err) {
-      console.warn('Could not seed sample event:', err);
+      console.warn('Could not seed sample event:');
       return null;
     }
   }

@@ -60,10 +60,10 @@ export function authenticate(config: FirebaseAdminConfig) {
     }
 
     try {
-      req.firebaseUser = await getAdminServices(config).auth.verifyIdToken(token);
+      req.firebaseUser = await getAdminServices(config).auth.verifyIdToken(token, true);
       return next();
     } catch (error) {
-      console.warn('Server authentication failed:', error);
+      console.warn('Server authentication failed:');
       return res.status(401).json({ error: 'Your session is invalid or expired. Please sign in again.' });
     }
   };

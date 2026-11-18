@@ -71,7 +71,6 @@ returning an unchanged photograph.` },
     model, generatedAt: new Date().toISOString(), aiEdited: true, modelText,
     note: 'Experimental full-image edit. Review for unintended changes; identity protection is not validated.',
   }, null, 2));
-  if (modelText) console.log(`Model response: ${modelText}`);
   return outputPath;
 }
 
@@ -86,7 +85,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       .then(result => console.log(`Saved AI-edited image: ${result}`))
       .catch(error => {
         // Avoid dumping SDK request objects, which can contain the photo or credentials.
-        console.error(error instanceof Error ? error.message : 'Image generation failed.');
+        console.error('Image generation failed. Check the configuration and try again.');
         process.exitCode = 1;
       });
   }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   Calendar,
   MapPin,
@@ -37,20 +38,27 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { eventService } from '../../services/eventService';
+import { thumbnailPosition } from '../../lib/thumbnail';
 import { invitationService } from '../../services/invitationService';
 import { galleryService } from '../../services/galleryService';
 import { EventItem, AttendeeRecord, PhotoRecord, CustomField } from '../../types';
 
 interface EventManagerPortalProps {
   onOpenCheckIn: (eventId: string) => void;
+  initialEventId?: string | null;
+  createOnOpen?: boolean;
+  onCancelCreate?: () => void;
+  onEventCreated?: (eventId: string) => void;
 }
 
 type TabType = 'overview' | 'attendees' | 'gallery' | 'settings';
 
-export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCheckIn }) => {
-  const { user, profile, isDemoMode } = useAuth();
+export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({
+  onOpenCheckIn, initialEventId, createOnOpen = false, onCancelCreate, onEventCreated
+}) => {
+  const { user, profile, isSuperAdmin } = useAuth();
   const [events, setEvents] = useState<EventItem[]>([]);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(initialEventId || null);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [loadingEvents, setLoadingEvents] = useState(true);
 
@@ -60,7 +68,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   const [loadingDetails, setLoadingDetails] = useState(false);
 
   // Create / Edit Event Modal
-  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [isEventModalOpen, setIsEventModalOpen] = useState(createOnOpen);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [formName, setFormName] = useState('');
   const [formDate, setFormDate] = useState('');
@@ -133,30 +141,11 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
     }, 4500);
   };
 
-  const [isUnblockingPhotos, setIsUnblockingPhotos] = useState(false);
   const [showReleaseGalleryModal, setShowReleaseGalleryModal] = useState(false);
   const [releasingGalleries, setReleasingGalleries] = useState(false);
 
-  const handleUnblockPhotos = async () => {
-    if (!selectedEventId) return;
-    setIsUnblockingPhotos(true);
-    try {
-      const count = await eventService.unblockPendingPhotos(selectedEventId);
-      await loadDetails(selectedEventId);
-      showToast(`Successfully processed and unlocked ${count} photo(s).`, 'success');
-    } catch (err: any) {
-      showToast('Error unblocking photos: ' + err.message, 'error');
-    } finally {
-      setIsUnblockingPhotos(false);
-    }
-  };
-
   const handleReleaseGalleries = async () => {
     if (!selectedEventId) return;
-    if (isDemoMode) {
-      showToast('Sign in with a Firebase manager account to release attendee galleries.', 'error');
-      return;
-    }
     setReleasingGalleries(true);
     try {
       const result = await galleryService.release(selectedEventId);
@@ -175,7 +164,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
         );
       }
     } catch (err: any) {
-      showToast('Error releasing galleries: ' + err.message, 'error');
+      showToast('Could not release galleries. Check delivery status and try again.', 'error');
     } finally {
       setReleasingGalleries(false);
     }
@@ -184,20 +173,19 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   // Load events
   const loadEvents = async () => {
     if (!user) return;
+    if (createOnOpen) { setLoadingEvents(false); return; }
     setLoadingEvents(true);
     try {
-      let list = await eventService.listManagerEvents(user.uid);
-      if (list.length === 0) {
-        // Automatically seed an initial demo event for immediate convenience
-        const seeded = await eventService.seedSampleEventIfEmpty(user.uid);
-        if (seeded) list = [seeded];
-      }
+      const target = isSuperAdmin && initialEventId ? await eventService.getEvent(initialEventId) : null;
+      const list = isSuperAdmin && initialEventId
+        ? (target ? [target] : [])
+        : await eventService.listManagerEvents(user.uid);
       setEvents(list);
       if (list.length > 0 && !selectedEventId) {
         setSelectedEventId(list[0].id);
       }
     } catch (err) {
-      console.error('Failed to list manager events:', err);
+      console.error('Failed to list manager events:');
     } finally {
       setLoadingEvents(false);
     }
@@ -205,7 +193,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
 
   useEffect(() => {
     loadEvents();
-  }, [user]);
+  }, [user, initialEventId, isSuperAdmin, createOnOpen]);
 
   // In-memory cache for event details (attendees and photos) to avoid redundant Firestore reads
   const eventDetailsCache = useRef<Map<string, { attendees: AttendeeRecord[]; photos: PhotoRecord[]; cachedAt: number }>>(new Map());
@@ -234,7 +222,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
         cachedAt: Date.now()
       });
     } catch (err) {
-      console.error('Failed to load event attendees or photos:', err);
+      console.error('Failed to load event attendees or photos:');
     } finally {
       setLoadingDetails(false);
     }
@@ -301,6 +289,16 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
     setIsEventModalOpen(true);
   };
 
+  useEffect(() => {
+    if (createOnOpen) handleOpenCreateModal();
+  }, [createOnOpen]);
+
+  const closeEventModal = () => {
+    if (savingEvent) return;
+    setIsEventModalOpen(false);
+    if (createOnOpen && modalMode === 'create') onCancelCreate?.();
+  };
+
   // Open Edit Event Modal
   const handleOpenEditModal = () => {
     if (!activeEvent) return;
@@ -330,6 +328,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       if (modalMode === 'create') {
         const newId = await eventService.createEvent({
           ownerUid: user.uid,
+          ownerEmail: user.email || undefined,
           name: formName.trim(),
           date: formDate.trim(),
           location: formLocation.trim(),
@@ -341,6 +340,10 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
           photographerEmails: [],
           photographerUids: []
         });
+        if (onEventCreated) {
+          onEventCreated(newId);
+          return;
+        }
         await loadEvents();
         setSelectedEventId(newId);
       } else if (modalMode === 'edit' && activeEvent) {
@@ -357,7 +360,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       }
       setIsEventModalOpen(false);
     } catch (err: any) {
-      showToast('Error saving event: ' + err.message, 'error');
+      showToast('Could not save the event. Please try again.', 'error');
     } finally {
       setSavingEvent(false);
     }
@@ -367,10 +370,6 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
   const handleInvitePhotographer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeEvent || !inviteEmail.trim()) return;
-    if (isDemoMode) {
-      showToast('Sign in with a Firebase manager account to send invitation emails.', 'error');
-      return;
-    }
     setInvitingPhotographer(true);
 
     try {
@@ -390,7 +389,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       await loadEvents();
       showToast(`Invitation sent to ${email}.`, 'success');
     } catch (err: any) {
-      showToast('Error inviting photographer: ' + err.message, 'error');
+      showToast('Could not send the invitation. Check the email address and try again.', 'error');
     } finally {
       setInvitingPhotographer(false);
     }
@@ -421,7 +420,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       setPhotographerToRemove(null);
       showToast(`Photographer ${emailToRemove} removed.`, 'info');
     } catch (err: any) {
-      showToast('Error removing photographer: ' + err.message, 'error');
+      showToast('Could not remove the photographer. Please try again.', 'error');
     } finally {
       setRemovingPhotographer(false);
     }
@@ -528,6 +527,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
 
   // Pending / Processed Photo & Attendee Partitions
   const pendingPhotos = useMemo(() => photos.filter((p) => p.status === 'pending'), [photos]);
+  const reviewPhotos = useMemo(() => photos.filter((p) => p.status === 'needs_review'), [photos]);
   const processedPhotos = useMemo(() => photos.filter((p) => p.status === 'processed' || p.status === 'flagged'), [photos]);
   const galleryRecipientCount = useMemo(() => {
     const matchedAttendeeIds = new Set(
@@ -620,7 +620,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
         setActiveLightboxPhoto({ ...activeLightboxPhoto, status: nextStatus });
       }
     } catch (err: any) {
-      showToast('Error updating status: ' + err.message, 'error');
+      showToast('Could not update the status. Please try again.', 'error');
     }
   };
 
@@ -653,13 +653,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       setDeleteConfirmPhoto(null);
       showToast(`Photo "${targetName}" was successfully deleted.`, 'success');
     } catch (err: any) {
-      console.error('Error deleting photo:', err);
-      let msg = err.message || 'Error deleting photo';
-      try {
-        const parsed = JSON.parse(err.message);
-        if (parsed.error) msg = parsed.error;
-      } catch (e) {}
-      setDeletePhotoError(msg);
+      console.error('Error deleting photo:');
+      setDeletePhotoError('Could not delete the photo. Please try again.');
     } finally {
       setDeletingPhotoId(null);
     }
@@ -713,7 +708,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
       setShowBulkDeleteModal(false);
       showToast(`Successfully deleted ${res.successful} photo(s).`, 'success');
     } catch (err: any) {
-      showToast(`Bulk delete notice: ${err.message}`, 'error');
+      showToast('Some photos could not be deleted. Please try again.', 'error');
     } finally {
       setIsBulkDeleting(false);
     }
@@ -721,6 +716,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
+      {!createOnOpen && <>
       {/* Top Banner */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between flex-wrap gap-4">
@@ -1508,8 +1504,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                   </div>
                 </div>
 
-                {/* Quarantine Security Notice for Raw Unprocessed Photos */}
-                {pendingPhotos.length > 0 && (
+                {/* Processing summary; review and pending photos are not included in the gallery. */}
+                {photos.length > 0 && (
                   <div className="p-4.5 rounded-2xl bg-amber-50/90 border border-amber-200 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-4 shadow-2xs">
                     <div className="flex items-center gap-3 min-w-[280px]">
                       <div className="w-9 h-9 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center shrink-0 text-amber-800">
@@ -1517,11 +1513,12 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                       </div>
                       <div>
                         <div className="font-bold text-amber-950 flex items-center gap-1.5">
-                          Privacy Access Control: {pendingPhotos.length} Raw Photo(s) Quarantined
+                          Photo processing status
                         </div>
                         <p className="text-[11px] text-amber-800 mt-0.5 max-w-2xl">
-                          Raw photos are held in quarantine and restricted from Event Manager access to prevent exposure of non-consenting faces. They are processed asynchronously by the backend Cloud Run pipeline to detect consented attendees, blur bystanders, and unlock privacy-cleared photos.
+                          {pendingPhotos.length} awaiting processing · {photos.filter((photo) => photo.status === 'processed').length} ready · {reviewPhotos.length} need review · {photos.filter((photo) => photo.status === 'flagged').length} flagged
                         </p>
+                        {reviewPhotos.length > 0 && <p className="text-[11px] text-amber-800 mt-1">Photos needing review are not shown in the ready gallery. Contact the person managing photo processing.</p>}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1534,15 +1531,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                         <RefreshCw className={`w-3.5 h-3.5 ${loadingDetails ? 'animate-spin' : ''}`} />
                         <span>Refresh Status</span>
                       </button>
-                      <button
-                        onClick={handleUnblockPhotos}
-                        disabled={isUnblockingPhotos}
-                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold transition flex items-center gap-1.5 shadow-xs text-xs cursor-pointer disabled:opacity-50"
-                        title="Synchronize and unblock privacy-cleared photos now"
-                      >
-                        <Sparkles className={`w-3.5 h-3.5 ${isUnblockingPhotos ? 'animate-spin' : ''}`} />
-                        <span>{isUnblockingPhotos ? 'Processing...' : 'Process & Unblock Photos'}</span>
-                      </button>
+
                     </div>
                   </div>
                 )}
@@ -1653,7 +1642,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
 
                     <div className="text-xs text-slate-500 font-medium ml-auto">
                       Showing {filteredPhotos.length} processed photo(s)
-                      {pendingPhotos.length > 0 && ` · (${pendingPhotos.length} quarantined raw)`}
+                      {pendingPhotos.length > 0 && ` · (${pendingPhotos.length} awaiting processing)`}
+                      {reviewPhotos.length > 0 && ` · (${reviewPhotos.length} need review)`}
                     </div>
                   </div>
                 </div>
@@ -1665,8 +1655,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                     <p className="text-sm font-semibold text-slate-700">No processed photos match your filter</p>
                     <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
                       {pendingPhotos.length > 0
-                        ? `${pendingPhotos.length} raw photo(s) are currently quarantined, waiting for the Cloud Run background pipeline to process them.`
-                        : 'Photographers can upload photos, which are automatically processed by the Cloud Run pipeline.'}
+                        ? `${pendingPhotos.length} photo(s) are awaiting processing.`
+                        : 'Photographers can upload photos for processing.'}
                     </p>
                   </div>
                 ) : (
@@ -1689,6 +1679,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                               src={photo.clearedDownloadUrl || photo.downloadUrl}
                               alt={photo.fileName}
                               loading="lazy"
+                              style={{ objectPosition: thumbnailPosition(photo) }}
                               className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
                             />
 
@@ -1793,7 +1784,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                                 ? `✓ ${photo.matchedAttendees.join(', ')}`
                                 : photo.hasBlurredFaces
                                 ? 'Bystanders blurred'
-                                : 'Privacy verified'}
+                                : 'Processed'}
                             </span>
                             <span className="text-indigo-600 group-hover:underline">View</span>
                           </div>
@@ -1822,6 +1813,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
           </div>
         )}
       </main>
+      </>}
 
       {/* CREATE / EDIT EVENT MODAL */}
       {isEventModalOpen && (
@@ -1832,7 +1824,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
                 {modalMode === 'create' ? 'Create New Event' : 'Edit Event Configuration'}
               </h3>
               <button
-                onClick={() => setIsEventModalOpen(false)}
+                onClick={closeEventModal}
+                disabled={savingEvent}
                 className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
               >
                 <X className="w-5 h-5" />
@@ -2091,7 +2084,8 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
               <div className="pt-4 border-t border-slate-100 flex gap-3">
                 <button
                   type="button"
-                  onClick={() => setIsEventModalOpen(false)}
+                  onClick={closeEventModal}
+                  disabled={savingEvent}
                   className="flex-1 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs font-semibold hover:bg-slate-50 transition"
                 >
                   Cancel
@@ -2119,14 +2113,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
             </p>
 
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block mb-4">
-              {/* QR Image via public QR server */}
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
-                  checkInUrl
-                )}`}
-                alt="QR Code"
-                className="w-48 h-48 mx-auto"
-              />
+              <QRCodeSVG value={checkInUrl} size={192} marginSize={4} title="Event check-in QR code" />
             </div>
 
             <p className="text-[11px] font-mono text-slate-600 break-all mb-4">
@@ -2316,7 +2303,7 @@ export const EventManagerPortal: React.FC<EventManagerPortalProps> = ({ onOpenCh
             </div>
             <h3 className="text-base font-bold text-slate-900">Release attendee galleries?</h3>
             <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-              Lumina Hub will email up to <strong>{galleryRecipientCount}</strong> consenting attendee
+              Masquerade will email up to <strong>{galleryRecipientCount}</strong> consenting attendee
               {galleryRecipientCount === 1 ? '' : 's'} who have matched photos. Each private link will expose the
               original, unredacted photographs for 30 days. Unchanged galleries will not receive duplicate email.
             </p>

@@ -67,7 +67,7 @@ export interface AttendeeRecord {
   deleteOn?: string; // ISO date timestamp when check-in photo and vector should be deleted by cleanup job
 }
 
-export type PhotoStatus = 'pending' | 'processed' | 'flagged';
+export type PhotoStatus = 'pending' | 'processed' | 'needs_review' | 'flagged';
 
 export interface PhotoRecord {
   id: string;
@@ -80,7 +80,11 @@ export interface PhotoRecord {
   storagePath: string;
   downloadUrl: string;
   fileName: string;
+  originalFileName?: string;
+  sourceHash?: string; // SHA-256 of input bytes, before any HEIC conversion
   fileSize?: number;
+  /** Optional thumbnail focal point, with coordinates normalized to 0–1. */
+  thumbnailFocus?: { x: number; y: number; imageWidth?: number; imageHeight?: number };
   status: PhotoStatus;
   matchedAttendees: string[];
   detectedFaceEmbeddings?: number[][]; // Extracted 512-dim face embeddings for KNN matching

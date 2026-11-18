@@ -57,7 +57,7 @@ function createFirestoreInstance() {
       }, dbId);
     }
   } catch (err) {
-    console.warn('Persistent local cache initialization notice, falling back to standard client:', err);
+    console.warn('Persistent local cache initialization notice, falling back to standard client:');
   }
   return getFirestore(app, dbId);
 }
@@ -94,25 +94,8 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
-  const currentUser = auth.currentUser;
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: currentUser?.uid,
-      email: currentUser?.email,
-      emailVerified: currentUser?.emailVerified,
-      isAnonymous: currentUser?.isAnonymous,
-      tenantId: currentUser?.tenantId,
-      providerInfo: currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  console.error('Firestore operation failed:', operationType);
+  throw new Error('The request could not be completed. Please try again.');
 }
 
 // Connection test as required by skill guidelines

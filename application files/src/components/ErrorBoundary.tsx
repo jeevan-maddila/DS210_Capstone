@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    console.error('ErrorBoundary caught an error:');
     this.setState({ errorInfo });
   }
 
@@ -35,8 +35,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public handleClearSession = () => {
     try {
-      sessionStorage.clear();
-      localStorage.clear();
+      sessionStorage.removeItem('lumina_demo_session');
     } catch (e) {}
     window.location.href = window.location.pathname;
   };
@@ -55,14 +54,8 @@ export class ErrorBoundary extends Component<Props, State> {
             </h2>
 
             <p className="text-xs text-slate-400 mt-2 mb-4 leading-relaxed">
-              An unexpected render exception was caught. The app intercepted it to prevent a blank screen.
+              Something went wrong. Please reload the application and try again.
             </p>
-
-            {this.state.error && (
-              <div className="text-left bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-[11px] font-mono text-rose-300 max-h-40 overflow-y-auto mb-6 break-words">
-                {this.state.error.toString()}
-              </div>
-            )}
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <button
@@ -78,7 +71,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 className="w-full sm:w-auto px-5 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs font-medium transition flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Home className="w-3.5 h-3.5" />
-                <span>Reset Session & Return Home</span>
+                <span>Clear Demo Session & Return Home</span>
               </button>
             </div>
           </div>

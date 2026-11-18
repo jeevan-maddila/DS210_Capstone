@@ -1,0 +1,8 @@
+__pycache__
+*.pyc
+.env*
+tests
+README.md
+deploy.sh
+*service-account*.json
+*service_account*.json

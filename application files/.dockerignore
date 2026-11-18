@@ -1,0 +1,16 @@
+node_modules
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+dist
+server.js
+coverage
+*.log
+jobs
+scripts
+*service-account*.json
+*service_account*.json
+.tools
+.npm-cache

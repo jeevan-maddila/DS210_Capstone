@@ -17,7 +17,6 @@ import {
   TrendingUp,
   Share2,
   Sparkles,
-  ShieldCheck,
   ChevronRight,
   Mail,
   UserCheck,
@@ -30,6 +29,7 @@ import {
   Info
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { AccountManager } from './AccountManager';
 import { adminService } from '../../services/adminService';
 import { eventService } from '../../services/eventService';
 import { EventItem, PlatformMetrics, ManagerSummary, PhotographerSummary, PhotoRecord, UserProfile } from '../../types';
@@ -37,15 +37,15 @@ import { EventItem, PlatformMetrics, ManagerSummary, PhotographerSummary, PhotoR
 interface SuperAdminPortalProps {
   onOpenEventManager: (eventId: string) => void;
   onOpenCheckInKiosk: (eventId: string) => void;
-  onOpenPhotographerPortal: (eventId?: string) => void;
+  onCreateEvent: () => void;
 }
 
-type AdminTab = 'photos' | 'users' | 'events' | 'managers' | 'photographers' | 'compliance' | 'database';
+type AdminTab = 'photos' | 'users' | 'events' | 'managers' | 'photographers' | 'database';
 
 export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
   onOpenEventManager,
   onOpenCheckInKiosk,
-  onOpenPhotographerPortal
+  onCreateEvent
 }) => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<AdminTab>('photos');
@@ -98,8 +98,8 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
       setAllPhotos(data.allPhotos || []);
       setAllUsers(data.allUsers || []);
     } catch (err: any) {
-      console.error('Failed to load super admin data:', err);
-      setError(err.message || 'Failed to retrieve cross-platform metrics. Please verify permissions.');
+      console.error('Failed to load super admin data:');
+      setError('Could not load the dashboard. Please check your access and try again.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -218,13 +218,8 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
       setDeleteModalEvent(null);
       await loadData(true);
     } catch (err: any) {
-      console.error('Failed to delete event as admin:', err);
-      let msg = err.message || 'Error deleting event';
-      try {
-        const parsed = JSON.parse(err.message);
-        if (parsed.error) msg = parsed.error;
-      } catch (e) {}
-      setDeleteError(msg);
+      console.error('Failed to delete event as admin:');
+      setDeleteError('Could not delete the event. Please try again.');
     } finally {
       setDeleting(false);
     }
@@ -243,8 +238,8 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
       setDeleteModalPhoto(null);
       await loadData(true);
     } catch (err: any) {
-      console.error('Failed to delete photo as admin:', err);
-      setDeleteError(err.message || 'Error deleting photo');
+      console.error('Failed to delete photo as admin:');
+      setDeleteError('Could not delete the photo. Please try again.');
     } finally {
       setDeleting(false);
     }
@@ -260,8 +255,8 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
       setInitResult(res);
       await loadData(true);
     } catch (e: any) {
-      console.error('Database initialization error:', e);
-      setError(e.message || 'Failed to initialize database');
+      console.error('Database initialization error:');
+      setError('Could not complete sample data setup. Check the database before retrying.');
     } finally {
       setInitializingDb(false);
     }
@@ -269,7 +264,8 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
 
   const [isResettingDemo, setIsResettingDemo] = useState(false);
   const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
-  const [resetWipeOnly, setResetWipeOnly] = useState(false);
+  const [resetWipeOnly, setResetWipeOnly] = useState(true);
+  const [resetConfirmation, setResetConfirmation] = useState('');
 
   const handleResetDemo = async () => {
     setIsResettingDemo(true);
@@ -291,8 +287,9 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
       setShowResetConfirmModal(false);
       await loadData(true);
     } catch (e: any) {
-      console.error('Reset demo error:', e);
-      setError(e.message || 'Failed to reset demo');
+      console.error('Reset demo error:');
+      setShowResetConfirmModal(false);
+      setError('The reset did not finish. Some records may already have been deleted; check the database before retrying.');
     } finally {
       setIsResettingDemo(false);
     }
@@ -317,12 +314,19 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Centralized Photo Roster, User Directory, Event Governance, and Firestore Materialization
+                Centralized Photo Roster, User Directory, Event Management, and Firestore Materialization
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5">
+            <button
+              onClick={onCreateEvent}
+              className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition flex items-center gap-1.5"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              Create event
+            </button>
             <button
               onClick={() => setActiveTab('database')}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer ${
@@ -332,7 +336,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
               }`}
             >
               <Database className="w-3.5 h-3.5 text-amber-600" />
-              <span>GCloud DB Spec</span>
+              <span>Database Tools</span>
             </button>
 
             <button
@@ -433,8 +437,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
 
           {/* Photo Marketing Consent Rate */}
           <div
-            onClick={() => setActiveTab('compliance')}
-            className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-2xs hover:border-violet-300 transition cursor-pointer"
+            className="bg-white rounded-2xl p-5 border border-slate-200/90 shadow-2xs"
           >
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -484,7 +487,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                 }`}
               >
                 <Users className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Users Table ({allUsers.length})</span>
+                <span>Accounts</span>
                 <span className="px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded text-[10px] font-mono">
                   Table
                 </span>
@@ -526,18 +529,6 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                 Photographers ({photographers.length})
               </button>
 
-              {/* Governance */}
-              <button
-                onClick={() => setActiveTab('compliance')}
-                className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
-                  activeTab === 'compliance'
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Governance
-              </button>
-
               {/* Database Schema & GCloud Sync */}
               <button
                 onClick={() => setActiveTab('database')}
@@ -548,12 +539,12 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                 }`}
               >
                 <Database className="w-3.5 h-3.5" />
-                <span>GCloud DB Setup</span>
+                <span>Database Tools</span>
               </button>
             </div>
 
             {/* Live Search Field */}
-            {activeTab !== 'compliance' && activeTab !== 'database' && (
+            {activeTab !== 'database' && (
               <div className="relative w-full md:w-72">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -641,7 +632,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                     <p className="text-xs text-slate-400 mt-1">
                       {searchQuery || photoEventFilter !== 'all'
                         ? 'Try adjusting your event or status filters'
-                        : 'No photos have been uploaded yet. Click "GCloud DB Setup" to seed sample data.'}
+                        : 'No photos have been uploaded yet. Photos will appear here when uploaded.'}
                     </p>
                   </div>
                 ) : (
@@ -814,196 +805,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
           {/* TAB 2: MASTER USERS DIRECTORY (Independent Users Table) */}
           {/* ========================================================================= */}
           {activeTab === 'users' && (
-            <div>
-              {/* Users Filter Toolbar */}
-              <div className="p-4 bg-slate-50/70 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Role Filter */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-slate-500">Filter Role:</span>
-                    <select
-                      value={userRoleFilter}
-                      onChange={(e) => setUserRoleFilter(e.target.value)}
-                      className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    >
-                      <option value="all">All Roles ({allUsers.length} users)</option>
-                      <option value="super_admin">Super Admins</option>
-                      <option value="event_manager">Event Managers</option>
-                      <option value="photographer">Photographers</option>
-                    </select>
-                  </div>
-
-                  {/* Event Filter for Users */}
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-medium text-slate-500">Assigned Event:</span>
-                    <select
-                      value={userEventFilter}
-                      onChange={(e) => setUserEventFilter(e.target.value)}
-                      className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                    >
-                      <option value="all">All Event Assignments</option>
-                      {events.map((ev) => (
-                        <option key={ev.id} value={ev.id}>
-                          {ev.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {(userRoleFilter !== 'all' || userEventFilter !== 'all' || searchQuery) && (
-                    <button
-                      onClick={() => {
-                        setUserRoleFilter('all');
-                        setUserEventFilter('all');
-                        setSearchQuery('');
-                      }}
-                      className="text-emerald-600 hover:text-emerald-800 text-xs font-semibold cursor-pointer underline"
-                    >
-                      Reset filters
-                    </button>
-                  )}
-                </div>
-
-                <div className="text-slate-500 font-mono text-[11px]">
-                  Showing <span className="font-bold text-slate-800">{filteredUsers.length}</span> of{' '}
-                  <span className="font-bold text-slate-800">{allUsers.length}</span> master users
-                </div>
-              </div>
-
-              {/* Users Table */}
-              <div className="overflow-x-auto">
-                {loading ? (
-                  <div className="p-12 text-center text-slate-400">
-                    <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-3 text-emerald-600" />
-                    <p className="text-xs">Loading master users table...</p>
-                  </div>
-                ) : filteredUsers.length === 0 ? (
-                  <div className="p-12 text-center text-slate-400">
-                    <Users className="w-12 h-12 mx-auto mb-3 opacity-40 text-emerald-400" />
-                    <p className="text-sm font-semibold text-slate-700">No users found</p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      {searchQuery || userRoleFilter !== 'all'
-                        ? 'Try adjusting your filters'
-                        : 'No users have registered yet. Click "GCloud DB Setup" to seed users.'}
-                    </p>
-                  </div>
-                ) : (
-                  <table className="w-full text-left text-xs text-slate-600">
-                    <thead className="bg-slate-50/80 text-slate-500 font-semibold border-b border-slate-200">
-                      <tr>
-                        <th className="py-3.5 px-4">User Identity</th>
-                        <th className="py-3.5 px-4">System Role</th>
-                        <th className="py-3.5 px-4">Assigned Events</th>
-                        <th className="py-3.5 px-4">Status</th>
-                        <th className="py-3.5 px-4">Created</th>
-                        <th className="py-3.5 px-4 text-right">Quick Filter</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredUsers.map((u) => (
-                        <tr key={u.uid} className="hover:bg-slate-50/70 transition">
-                          {/* Identity */}
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2.5">
-                              <div
-                                className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-xs ${
-                                  u.role === 'super_admin'
-                                    ? 'bg-violet-600'
-                                    : u.role === 'event_manager'
-                                    ? 'bg-indigo-600'
-                                    : 'bg-emerald-600'
-                                }`}
-                              >
-                                {u.displayName ? u.displayName.charAt(0).toUpperCase() : u.email.charAt(0).toUpperCase()}
-                              </div>
-                              <div>
-                                <div className="font-medium text-slate-900">{u.displayName || 'User'}</div>
-                                <div className="text-slate-500 text-[11px]">{u.email}</div>
-                                <div className="text-[10px] font-mono text-slate-400">UID: {u.uid}</div>
-                              </div>
-                            </div>
-                          </td>
-
-                          {/* Role */}
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                u.role === 'super_admin'
-                                  ? 'bg-violet-100 text-violet-800 border border-violet-200'
-                                  : u.role === 'event_manager'
-                                  ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              }`}
-                            >
-                              {u.role.replace('_', ' ')}
-                            </span>
-                          </td>
-
-                          {/* Assigned Events */}
-                          <td className="py-3 px-4">
-                            {u.assignedEvents && u.assignedEvents.length > 0 ? (
-                              <div className="flex flex-wrap gap-1 max-w-xs">
-                                {u.assignedEvents.map((evId) => {
-                                  const evObj = events.find((e) => e.id === evId);
-                                  return (
-                                    <span
-                                      key={evId}
-                                      onClick={() => {
-                                        setPhotoEventFilter(evId);
-                                        setActiveTab('photos');
-                                      }}
-                                      className="px-2 py-0.5 rounded bg-slate-100 hover:bg-purple-100 hover:text-purple-700 text-slate-700 text-[10px] font-medium transition cursor-pointer flex items-center gap-1"
-                                      title="Filter photos by this event"
-                                    >
-                                      <span>{evObj ? evObj.name : evId}</span>
-                                      <Camera className="w-2.5 h-2.5 opacity-60" />
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <span className="text-slate-400 text-[11px]">Unassigned (Global)</span>
-                            )}
-                          </td>
-
-                          {/* Account Status */}
-                          <td className="py-3 px-4">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              {u.inviteStatus || 'Active'}
-                            </span>
-                          </td>
-
-                          {/* Created */}
-                          <td className="py-3 px-4 whitespace-nowrap text-slate-500 text-[11px]">
-                            {u.createdAt
-                              ? new Date(u.createdAt).toLocaleDateString(undefined, {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric'
-                                })
-                              : '—'}
-                          </td>
-
-                          {/* Quick Filter */}
-                          <td className="py-3 px-4 text-right">
-                            <button
-                              onClick={() => {
-                                setSearchQuery(u.email);
-                                setActiveTab('photos');
-                              }}
-                              className="px-2 py-1 bg-slate-100 hover:bg-purple-100 text-slate-700 hover:text-purple-700 rounded-lg text-[11px] font-medium transition cursor-pointer inline-flex items-center gap-1"
-                            >
-                              <span>View Photos</span>
-                              <ArrowRight className="w-3 h-3" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
+            <AccountManager events={events} onChanged={() => loadData(true)} />
           )}
 
           {/* ========================================================================= */}
@@ -1040,7 +842,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                     {filteredEvents.map((ev) => (
                       <tr key={ev.id} className="hover:bg-slate-50/70 transition">
                         <td className="py-3.5 px-4">
-                          <div className="font-semibold text-slate-900">{ev.name}</div>
+                          <button onClick={() => onOpenEventManager(ev.id)} className="font-semibold text-indigo-700 hover:underline text-left">{ev.name}</button>
                           <div className="flex items-center gap-3 text-slate-500 text-[11px] mt-0.5">
                             <span className="flex items-center gap-1">
                               <Calendar className="w-3 h-3 text-slate-400" />
@@ -1073,7 +875,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                             onClick={() => onOpenCheckInKiosk(ev.id)}
                             className="text-[11px] text-indigo-600 hover:underline flex items-center gap-0.5 mt-0.5 cursor-pointer"
                           >
-                            <span>Open Kiosk</span>
+                            <span>Preview check-in</span>
                             <ExternalLink className="w-2.5 h-2.5" />
                           </button>
                         </td>
@@ -1098,13 +900,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                           <div className="font-medium text-slate-900">
                             {ev.assignedPhotographers?.length ?? 0} Assigned
                           </div>
-                          <button
-                            onClick={() => onOpenPhotographerPortal(ev.id)}
-                            className="text-[11px] text-emerald-600 hover:underline flex items-center gap-0.5 mt-0.5 cursor-pointer"
-                          >
-                            <span>Open Portal</span>
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </button>
+
                         </td>
 
                         <td className="py-3.5 px-4 text-right">
@@ -1219,52 +1015,6 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
           )}
 
           {/* ========================================================================= */}
-          {/* TAB 6: GOVERNANCE & RETENTION */}
-          {/* ========================================================================= */}
-          {activeTab === 'compliance' && (
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200">
-                  <div className="flex items-center gap-2 mb-3 text-slate-900 font-bold text-sm">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    <span>30-Day Automated Vector Cleanup (TTL)</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed mb-4">
-                    All check-in selfie photographs and their extracted 512-dimensional facial embedding vectors
-                    are assigned an immutable <code className="font-mono text-slate-800 bg-slate-200 px-1 py-0.5 rounded">deleteOn</code> timestamp
-                    exactly 30 days after check-in.
-                  </p>
-                  <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs flex items-center justify-between">
-                    <span className="text-slate-600">Automated TTL Status:</span>
-                    <span className="font-semibold text-emerald-700 flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      Active & Enforced
-                    </span>
-                  </div>
-                </div>
-
-                <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200">
-                  <div className="flex items-center gap-2 mb-3 text-slate-900 font-bold text-sm">
-                    <Sparkles className="w-4 h-4 text-purple-600" />
-                    <span>Zero-Consent Facial Redaction</span>
-                  </div>
-                  <p className="text-xs text-slate-600 leading-relaxed mb-4">
-                    Any face detected in high-resolution event photography that does not strictly match a
-                    registered attendee who explicitly opted into photo marketing is automatically blurred
-                    before public display.
-                  </p>
-                  <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs flex items-center justify-between">
-                    <span className="text-slate-600">Company Consent Rate:</span>
-                    <span className="font-semibold text-purple-700">
-                      {metrics?.photoConsentPercentage ?? 0}% ({metrics?.photoConsentCount ?? 0} attendees)
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ========================================================================= */}
           {/* TAB 7: DATABASE SCHEMA & GCLOUD SPECIFICATION (User's Exact Issue) */}
           {/* ========================================================================= */}
           {activeTab === 'database' && (
@@ -1277,27 +1027,8 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                   </div>
                   <div className="text-xs text-amber-950 space-y-2">
                     <h3 className="font-bold text-sm text-amber-900">
-                      Why does GCloud Firestore look different from the DB spec?
-                    </h3>
-                    <p className="leading-relaxed">
-                      <strong>1. Named Database:</strong> In Google Cloud Console, the default database displayed is{' '}
-                      <code className="bg-amber-100 font-mono text-amber-900 px-1 py-0.5 rounded font-bold">(default)</code>.
-                      However, this application's database is provisioned with database ID:{' '}
-                      <code className="bg-amber-100 font-mono text-amber-900 px-1 py-0.5 rounded font-bold">
-                        ai-studio-a1858ef2-f062-409f-aaff-1218861a9484
-                      </code>. In Google Cloud Console &rarr; Firestore, make sure to switch the top database dropdown to this ID.
-                    </p>
-                    <p className="leading-relaxed">
-                      <strong>2. Schema-less Initialization:</strong> Firestore does not use static DDL schemas like PostgreSQL.
-                      Collections and document variables <em>do not appear in the GCloud console</em> until documents are actually written with those variables.
-                    </p>
-                    <p className="leading-relaxed">
-                      <strong>3. Relational Top-Level Architecture:</strong> As requested, we have updated the architecture so that{' '}
-                      <code className="bg-amber-100 font-mono text-amber-900 px-1 py-0.5 rounded font-bold">photos</code> and{' '}
-                      <code className="bg-amber-100 font-mono text-amber-900 px-1 py-0.5 rounded font-bold">users</code> are now first-class root tables.
-                      Photos have <code className="bg-amber-100 font-mono text-amber-900 px-1 py-0.5 rounded font-bold">eventId</code> and{' '}
-                      <code className="bg-amber-100 font-mono text-amber-900 px-1 py-0.5 rounded font-bold">event_id</code> as relational columns.
-                    </p>
+                      Database tools</h3>
+                    <p className="leading-relaxed">These tools modify the configured database. Use sample data only in a test environment and verify backups before deleting records.</p>
                   </div>
                 </div>
               </div>
@@ -1307,7 +1038,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h4 className="font-bold text-slate-900 text-sm">
-                      Initialize All Collections & Variables in GCloud
+                      Seed Sample Data
                     </h4>
                     <p className="text-xs text-slate-500 mt-1">
                       Materializes master records in <code className="font-mono font-semibold">admins</code>,{' '}
@@ -1332,22 +1063,23 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                       ) : (
                         <>
                           <Sparkles className="w-4 h-4" />
-                          <span>Initialize / Seed Missing</span>
+                          <span>Seed Sample Records</span>
                         </>
                       )}
                     </button>
 
                     <button
                       onClick={() => {
-                        setResetWipeOnly(false);
+                        setResetWipeOnly(true);
+                        setResetConfirmation('');
                         setShowResetConfirmModal(true);
                       }}
                       disabled={initializingDb || isResettingDemo}
                       className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 whitespace-nowrap"
-                      title="Wipe test events, photos, and check-ins, and start the demo over from scratch"
+                      title="Delete event, attendee, and photo records"
                     >
                       <Trash2 className="w-4 h-4 text-rose-600" />
-                      <span>Wipe &amp; Reset Demo</span>
+                      <span>Reset Database</span>
                     </button>
                   </div>
                 </div>
@@ -1357,7 +1089,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                   <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs">
                     <div className="flex items-center gap-2 font-bold text-emerald-800 mb-1">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>Database Successfully Materialized!</span>
+                      <span>Database operation finished</span>
                     </div>
                     <p>
                       Initialized collections:{' '}
@@ -1367,11 +1099,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                       ({initResult.recordsCount} total documents written).
                     </p>
                     <p className="mt-1 text-slate-600">
-                      Open your Google Cloud Firestore Console under database{' '}
-                      <code className="font-mono font-bold text-slate-800">
-                        ai-studio-a1858ef2-f062-409f-aaff-1218861a9484
-                      </code>{' '}
-                      to see the tables and variables live.
+                      Open the configured database in the Google Cloud Firestore Console to see the tables and variables live.
                     </p>
                   </div>
                 )}
@@ -1381,9 +1109,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
               <div className="rounded-2xl border border-slate-200 overflow-hidden">
                 <div className="p-4 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-700 flex items-center justify-between">
                   <span>Firestore Blueprint & Schema Architecture</span>
-                  <span className="font-mono text-[11px] text-slate-500">
-                    Target DB: ai-studio-a1858ef2-f062-409f-aaff-1218861a9484
-                  </span>
+
                 </div>
                 <div className="divide-y divide-slate-100 text-xs">
                   {/* /photos/{photoId} */}
@@ -1499,7 +1225,6 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                       <span className="bg-slate-100 px-1.5 py-0.5 rounded">consentGiven (boolean)</span>
                       <span className="bg-slate-100 px-1.5 py-0.5 rounded">photoConsentGiven (boolean)</span>
                       <span className="bg-slate-100 px-1.5 py-0.5 rounded">photoEmbedding (512-D vector)</span>
-                      <span className="bg-slate-100 px-1.5 py-0.5 rounded">deleteOn (30-day TTL)</span>
                     </div>
                   </div>
                 </div>
@@ -1705,10 +1430,9 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
             <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
               <AlertTriangle className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-bold text-slate-900">Reset Demo &amp; Wipe Database?</h3>
+            <h3 className="text-lg font-bold text-slate-900">Reset Database?</h3>
             <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-              This will completely wipe all test records across Firestore database{' '}
-              <strong className="text-slate-900 font-mono">ai-studio-a1858ef2-f062-409f-aaff-1218861a9484</strong>, including all uploaded photos, check-in attendees, and test events.
+              This attempts to delete all events, attendee records, and photo records in the configured database, including real data. Stored image files and other collections may remain. This cannot be undone from the app.
             </p>
 
             <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2">
@@ -1719,13 +1443,14 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
                   onChange={(e) => setResetWipeOnly(!e.target.checked)}
                   className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
                 />
-                <span>Reseed fresh sample event &amp; attendees after wiping (Recommended)</span>
+                <span>Add sample records after deleting</span>
               </label>
               <p className="text-[11px] text-slate-500 pl-6">
-                Uncheck if you want a 100% blank slate with zero records.
+                Sample records are for testing only.
               </p>
             </div>
 
+            <label className="block mt-4 text-xs text-slate-700">Type DELETE to confirm<input value={resetConfirmation} onChange={(e) => setResetConfirmation(e.target.value)} className="block w-full mt-1 p-2 border border-slate-300 rounded" /></label>
             <div className="flex items-center justify-end gap-2.5 mt-6">
               <button
                 onClick={() => setShowResetConfirmModal(false)}
@@ -1736,7 +1461,7 @@ export const SuperAdminPortal: React.FC<SuperAdminPortalProps> = ({
               </button>
               <button
                 onClick={handleResetDemo}
-                disabled={isResettingDemo}
+                disabled={isResettingDemo || resetConfirmation !== 'DELETE'}
                 className="px-5 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition cursor-pointer flex items-center gap-1.5 disabled:opacity-60 shadow-xs"
               >
                 {isResettingDemo && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}

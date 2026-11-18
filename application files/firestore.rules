@@ -109,7 +109,9 @@ service cloud.firestore {
     // Photos Collection (Master Photos Table - with eventId/event_id column)
     match /photos/{photoId} {
       // Photo metadata contains private storage references.
-      allow get, list: if isSignedIn();
+      allow get, list: if isSignedIn() && (
+        isSuperAdmin() || isEventOwner(existing().eventId) || existing().uploadedBy == request.auth.uid
+      );
 
       // Creation: Event owner or an accepted photographer for this event.
       allow create: if isSignedIn() &&
@@ -199,7 +201,9 @@ service cloud.firestore {
 
       // Photos Subcollection: /events/{eventId}/photos/{photoId} (Backward Compatibility)
       match /photos/{photoId} {
-        allow get, list: if isSignedIn();
+        allow get, list: if isSignedIn() && (
+          isSuperAdmin() || isEventOwner(eventId) || existing().uploadedBy == request.auth.uid
+        );
 
         allow create: if isSignedIn() &&
           incoming().uploadedBy == request.auth.uid &&

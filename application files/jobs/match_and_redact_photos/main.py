@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import os
 from pathlib import Path
 import urllib.parse
@@ -321,7 +322,7 @@ def collect_photos(db, event_id, photo_id, limit, scan_limit=100, force=False, g
         data = doc.to_dict() or {}
         eid = data.get("eventId")
         if not eid or (event_id and eid != event_id):
-            LOG.warning("Skipping root photo %s: missing/conflicting eventId", doc.id)
+            LOG.warning("Skipping photo: missing or conflicting event ID")
             continue
         if not force and data.get("status") != "pending":
             continue
@@ -370,12 +371,11 @@ def load_attendees(db, event_id, max_per_source=500):
             continue
         diagnostics["valid_embeddings"] += 1
         usable.append({"id": snap.id, "consent": consent, "embedding": emb})
-    LOG.info("Task 2 root-only attendee lookup event=%s retrieved=%d usable=%d stats=%s",
-             event_id, len(snapshots), len(usable), diagnostics)
+    LOG.info("Attendee templates retrieved=%d usable=%d stats=%s", len(snapshots), len(usable), diagnostics)
     if diagnostics["model_mismatch"]:
         LOG.warning("Attendee model signature mismatch; expected %s", MODEL_SIGNATURE)
     if not usable:
-        LOG.warning("No usable templates for event=%s", event_id)
+        LOG.warning("No usable attendee templates for event")
     return usable
 
 
@@ -403,9 +403,34 @@ def match_face(embedding, attendees):
     return best["id"], "matched", best_score
 
 
+def thumbnail_focus(faces, image_width, image_height):
+    """Normalized center of the detected face group; no identity data or boxes stored."""
+    if image_width <= 0 or image_height <= 0:
+        return None
+    boxes = []
+    for face in faces:
+        try:
+            left, top, right, bottom = map(float, face["bbox"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in (left, top, right, bottom)):
+            continue
+        left, right = max(0.0, left), min(float(image_width), right)
+        top, bottom = max(0.0, top), min(float(image_height), bottom)
+        if right > left and bottom > top:
+            boxes.append((left, top, right, bottom))
+    if not boxes:
+        return None
+    return {
+        "x": (min(box[0] for box in boxes) + max(box[2] for box in boxes)) / (2 * image_width),
+        "y": (min(box[1] for box in boxes) + max(box[3] for box in boxes)) / (2 * image_height),
+        "imageWidth": int(image_width),
+        "imageHeight": int(image_height),
+    }
+
+
 def process_photo(db, bucket, engine, row, cache, max_attendees_per_source=500):
     event_id, photo_id = row["event_id"], row["photo_id"]
-    label = f"{event_id}/{photo_id}"
     try:
         if event_id not in cache:
             cache[event_id] = load_attendees(db, event_id, max_per_source=max_attendees_per_source)
@@ -419,11 +444,8 @@ def process_photo(db, bucket, engine, row, cache, max_attendees_per_source=500):
         matched_ids = set()
         count_blurred = 0
         for face in faces:
-            consenting_id, match_reason, best_similarity = match_face(face["embedding"], cache[event_id])
-            LOG.info("%s face match: reason=%s best_cosine=%s threshold=%.3f margin=%.3f",
-                     label, match_reason,
-                     "unavailable" if best_similarity is None else f"{best_similarity:.4f}",
-                     MATCH_THRESHOLD, MATCH_MARGIN)
+            consenting_id, match_reason, _best_similarity = match_face(face["embedding"], cache[event_id])
+            LOG.debug("Face match decision: %s", match_reason)
             if consenting_id is None:
                 blur_face(cleared, face["bbox"])
                 count_blurred += 1
@@ -440,21 +462,22 @@ def process_photo(db, bucket, engine, row, cache, max_attendees_per_source=500):
             "hasBlurredFaces": count_blurred > 0,
             "blurredFaceCount": count_blurred,
             "detectedFaceCount": len(faces),
+            "thumbnailFocus": thumbnail_focus(faces, image.shape[1], image.shape[0]),
             "clearedStoragePath": cleared_path,
             "clearedDownloadUrl": cleared_url,
             "recognitionModel": MODEL_SIGNATURE,
             "processedAt": datetime.now(timezone.utc),
             "processingError": None,
         })
-        LOG.info("%s published: %d faces, %d redacted, %d consenting attendees", label, len(faces), count_blurred, len(matched_ids))
+        LOG.info("Photo processed: %d faces, %d redacted, %d consenting attendees", len(faces), count_blurred, len(matched_ids))
         return True
     except Exception as exc:
-        LOG.error("%s requires review: %s", label, exc)
+        LOG.error("Photo requires review: %s", type(exc).__name__)
         # Revoke any previously published bearer-token URL where possible.
         try:
             bucket.blob(f"events/{event_id}/photos/cleared/{photo_id}.jpg").delete()
         except Exception as delete_error:
-            LOG.warning("Could not revoke previously cleared photo for %s: %s", label, delete_error)
+            LOG.warning("Could not revoke previously cleared photo: %s", type(delete_error).__name__)
         # Quarantine without exposing originals or implying privacy processing succeeded.
         try:
             update_existing(db, row["docs"], {
@@ -464,11 +487,12 @@ def process_photo(db, bucket, engine, row, cache, max_attendees_per_source=500):
                 "blurredFaceCount": 0,
                 "clearedStoragePath": firestore.DELETE_FIELD,
                 "clearedDownloadUrl": firestore.DELETE_FIELD,
-                "processingError": str(exc)[:500],
+                "thumbnailFocus": firestore.DELETE_FIELD,
+                "processingError": "Photo processing failed; review required.",
                 "processedAt": firestore.DELETE_FIELD,
             })
         except Exception:
-            LOG.exception("Failed to quarantine photo %s in Firestore", label)
+            LOG.error("Failed to save photo review status")
         return False
 
 

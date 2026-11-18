@@ -1,4 +1,4 @@
-# Lumina Event Photo Hub - Security Specification
+# Masquerade - Security Specification
 
 ## 1. Data Invariants
 
